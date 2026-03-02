@@ -1,4 +1,5 @@
 # Netron VSCode Preview
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A VS Code extension workspace that previews model files with Netron parsers and adds NNJS export and crop tools.
 
@@ -34,7 +35,7 @@ You can also right-click a file in explorer and run the same command.
 cd /home/zhaochen/net_vsix
 npx @vscode/vsce ls
 mkdir -p dist
-npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.1.vsix
+npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.5.vsix
 ```
 
 ## VSCode 安装
@@ -42,7 +43,7 @@ npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.1.vsix
 ```bash
 cd /home/zhaochen/net_vsix
 code --uninstall-extension local.netron-vscode-preview || true
-code --install-extension dist/netron-vscode-preview-0.0.1.vsix --force
+code --install-extension dist/netron-vscode-preview-0.0.5.vsix --force
 ```
 
 ## 命令验证
@@ -53,7 +54,7 @@ code --list-extensions --show-versions | rg local.netron-vscode-preview
 
 Expected output includes:
 
-- `local.netron-vscode-preview@0.0.1`
+- `local.netron-vscode-preview@0.0.5`
 
 ## 功能验证（NNJS / Crop / Screenshot）
 
