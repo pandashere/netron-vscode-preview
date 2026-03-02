@@ -1,0 +1,4 @@
+dist/
+*.vsix
+.vscode/
+.DS_Store

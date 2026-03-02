@@ -1,0 +1,41 @@
+{
+  "name": "netron-vscode-preview",
+  "displayName": "Netron VSCode Preview",
+  "description": "Preview neural network models in VS Code with Netron parser support, NNJS export, and crop workflow.",
+  "version": "0.0.4",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Machine Learning"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "package:vsix": "npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.4.vsix",
+    "install:vsix": "code --install-extension dist/netron-vscode-preview-0.0.4.vsix --force",
+    "verify:vsix": "code --list-extensions --show-versions"
+  },
+  "activationEvents": [
+    "onCommand:netronPreview.openPreview"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "netronPreview.openPreview",
+        "title": "Netron: Preview Model"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "netronPreview.openPreview",
+          "when": "resourceScheme == file",
+          "group": "navigation@100"
+        }
+      ]
+    }
+  }
+}
