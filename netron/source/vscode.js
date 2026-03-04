@@ -234,6 +234,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
     const CONTEXT_OPEN_TIMEOUT_MS = 8000;
     const OPEN_CONTEXT_TIMEOUT_MS = 15000;
+    const RESOURCE_REQUEST_TIMEOUT_MS = 3000;
 
     const postModelLog = (level, message, detail) => {
         if (!vscodeApi) {
@@ -262,6 +263,7 @@ window.addEventListener('unhandledrejection', function(event) {
             super();
             this._vscode = vscodeApi;
             this._pendingModel = null;
+            this._resourceRequests = new Map();
             this._captureToMemory = false;
             this._memory = {
                 screenshot: null
@@ -273,6 +275,107 @@ window.addEventListener('unhandledrejection', function(event) {
             this._environment.packaged = false;
             this._environment.repository = 'https://github.com/lutzroeder/netron';
             this._window.addEventListener('message', (event) => this._handleMessage(event.data));
+        }
+
+        _url(file) {
+            if (typeof file !== 'string' || file.length === 0) {
+                return super._url(file);
+            }
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(file)) {
+                return file;
+            }
+            let normalized = file;
+            if (normalized.startsWith('./')) {
+                normalized = normalized.substring(2);
+            } else if (normalized.startsWith('/')) {
+                normalized = normalized.substring(1);
+            }
+            const candidates = [];
+            if (this.document && typeof this.document.baseURI === 'string' && this.document.baseURI.length > 0) {
+                candidates.push(this.document.baseURI);
+            }
+            if (typeof window.__netron_vscode_base__ === 'string' && window.__netron_vscode_base__.length > 0) {
+                candidates.push(window.__netron_vscode_base__);
+            }
+            if (this.window && this.window.location && typeof this.window.location.href === 'string' && this.window.location.href.length > 0) {
+                candidates.push(this.window.location.href);
+            }
+            for (const base of candidates) {
+                try {
+                    return new this._window.URL(normalized, base).toString();
+                } catch {
+                    // continue regardless of error
+                }
+            }
+            return super._url(file);
+        }
+
+        async request(file, encoding, base) {
+            try {
+                return await super.request(file, encoding, base);
+            } catch (error) {
+                if (!this._isMetadataFile(file)) {
+                    throw error;
+                }
+                const detail = {
+                    file,
+                    base: base === undefined ? '[undefined]' : (base === null ? '[null]' : String(base)),
+                    error: error instanceof Error ? error.message : String(error)
+                };
+                if (error && typeof error.context === 'string' && error.context.length > 0) {
+                    detail.context = error.context;
+                }
+                this._post({
+                    type: 'modelOpenLog',
+                    level: 'warn',
+                    message: 'metadata request failed',
+                    detail
+                });
+                try {
+                    const text = await this._readBundledText(file);
+                    this._post({
+                        type: 'modelOpenLog',
+                        level: 'info',
+                        message: 'metadata loaded by extension fallback',
+                        detail: { file }
+                    });
+                    return text;
+                } catch (fallbackError) {
+                    this._post({
+                        type: 'modelOpenLog',
+                        level: 'warn',
+                        message: 'metadata extension fallback failed',
+                        detail: {
+                            file,
+                            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+                        }
+                    });
+                    throw error;
+                }
+            }
+        }
+
+        _isMetadataFile(file) {
+            return typeof file === 'string' && /^[a-z0-9._-]+-metadata\.json$/i.test(file);
+        }
+
+        async _readBundledText(file) {
+            if (!this._vscode) {
+                throw new Error('VSCode API is not available.');
+            }
+            const requestId = `resource-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            return new Promise((resolve, reject) => {
+                const timer = this._window.setTimeout(() => {
+                    this._resourceRequests.delete(requestId);
+                    reject(new Error(`Timed out while reading bundled text '${file}'.`));
+                }, RESOURCE_REQUEST_TIMEOUT_MS);
+                this._resourceRequests.set(requestId, { resolve, reject, timer });
+                this._post({
+                    type: 'readBundledText',
+                    requestId,
+                    file
+                });
+            });
         }
 
         async view(view) {
@@ -566,6 +669,24 @@ window.addEventListener('unhandledrejection', function(event) {
             }
             if (message.type === 'ping') {
                 this._post({ type: 'pong', ts: Date.now() });
+                return;
+            }
+            if (message.type === 'readBundledTextResult') {
+                const requestId = typeof message.requestId === 'string' ? message.requestId : '';
+                if (!requestId || !this._resourceRequests.has(requestId)) {
+                    return;
+                }
+                const pending = this._resourceRequests.get(requestId);
+                this._resourceRequests.delete(requestId);
+                this._window.clearTimeout(pending.timer);
+                if (message.ok && typeof message.text === 'string') {
+                    pending.resolve(message.text);
+                    return;
+                }
+                const errorText = typeof message.error === 'string' && message.error.length > 0
+                    ? message.error
+                    : 'Failed to read bundled text.';
+                pending.reject(new Error(errorText));
                 return;
             }
             if (message.type === 'loadModel') {

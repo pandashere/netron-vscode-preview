@@ -464,6 +464,10 @@ async function handleWebviewMessage(panel, message) {
             await handleCopyText(panel, message);
             break;
         }
+        case 'readBundledText': {
+            await handleReadBundledText(panel, message);
+            break;
+        }
         case 'openExternal': {
             if (typeof message.url === 'string' && message.url.length > 0) {
                 try {
@@ -552,6 +556,60 @@ async function handleCopyText(panel, message) {
             type: 'clipboardError',
             label,
             message: error instanceof Error ? error.message : String(error)
+        });
+    }
+}
+
+function isBundledMetadataFileName(file) {
+    return typeof file === 'string' && /^[a-z0-9._-]+-metadata\.json$/i.test(file);
+}
+
+async function handleReadBundledText(panel, message) {
+    const requestId = typeof message.requestId === 'string' && message.requestId.length > 0
+        ? message.requestId
+        : null;
+    const file = typeof message.file === 'string' ? message.file : '';
+
+    if (!requestId) {
+        return;
+    }
+    if (!isBundledMetadataFileName(file)) {
+        appendLog('warn', requestId, 'invalid bundled metadata request', { file });
+        await panel.webview.postMessage({
+            type: 'readBundledTextResult',
+            requestId,
+            ok: false,
+            error: 'Invalid metadata file name.'
+        });
+        return;
+    }
+
+    try {
+        if (!panelState.context || !panelState.context.extensionUri) {
+            throw new Error('Extension context is unavailable.');
+        }
+        const sourceRoot = vscode.Uri.joinPath(panelState.context.extensionUri, 'netron', 'source');
+        const target = vscode.Uri.joinPath(sourceRoot, file);
+        const bytes = await vscode.workspace.fs.readFile(target);
+        const text = Buffer.from(bytes).toString('utf8');
+        appendLog('stage', requestId, 'bundled metadata fallback loaded', { file });
+        await panel.webview.postMessage({
+            type: 'readBundledTextResult',
+            requestId,
+            ok: true,
+            text
+        });
+    } catch (error) {
+        const errorText = error instanceof Error ? error.message : String(error);
+        appendLog('warn', requestId, 'bundled metadata fallback failed', {
+            file,
+            error: errorText
+        });
+        await panel.webview.postMessage({
+            type: 'readBundledTextResult',
+            requestId,
+            ok: false,
+            error: errorText
         });
     }
 }
