@@ -1,70 +1,88 @@
-# Netron VSCode Preview
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+# Netron VSCode Workbench
 
-A VS Code extension workspace that previews model files with Netron parsers and adds NNJS export and crop tools.
+A VS Code extension workspace that previews ONNX models with Netron rendering and adds host-managed crop, export, inference, and compare workflows.
 
-## Command
+## Commands
 
 Use command palette (`Ctrl+Shift+P`) and run:
 
 - `Netron: Preview Model`
+- `Netron: Focus Compare`
+- `Netron: Clear Compare`
 
-You can also right-click a file in explorer and run the same command.
+You can also right-click a file in explorer and run `Netron: Preview Model`.
 
 ## Implemented Features
 
-- Preview model graph in VS Code Webview using Netron parsers (`netron/source/*`).
-- One-click `Convert To NNJS` button.
-- NNJS structure and weights are separated:
-  - default: no weight export
-  - optional: include weights and save as separate `*.weights.json`
-- Expandable crop panel:
-  - `Select Start Tensor` / `Select End Tensor`
-  - click once to select tensor edge, click again to unselect
-  - multi-select supported
-  - `Confirm Crop` computes subgraph by forward/backward traversal intersection
-- Crop output behavior:
-  - cropped graph is rendered in memory
-- screenshot is cached in memory first
-- then user can `Save Crop Screenshot` or `Copy Crop Screenshot`
-- Save cropped NNJS (and cropped weights if enabled).
+- Multi-panel model preview in VS Code Webview.
+- Host-managed ONNX loading path for large models.
+- `Model Tools` drawer integrated into the Netron bottom toolbar.
+- Crop workflow:
+  - select start / end tensors by clicking edges
+  - confirm crop to create a `Confirmed Crop Artifact`
+  - draft vs confirmed vs stale state handling
+- Export workflow:
+  - export confirmed crop directly to `.onnx`
+  - save current graph as PNG
+- Inference workflow:
+  - run on confirmed crop or full graph
+  - auto input generation: zeros / ones / random
+  - import inputs from `.json` or `.npz`
+- Compare workflow:
+  - compare two crop artifacts by I/O compatibility
+  - no internal graph isomorphism requirement
+  - A/B slots managed by a shared bottom `Netron Compare` panel
+  - output diff metrics include max abs / mean abs / RMSE / max relative diff / cosine similarity
+- Activity workflow:
+  - per-panel activity log
+  - task status, stage display, and busy state propagation
 
-## VSIX 打包
+## Design Notes
+
+- Compare is defined as comparing two subgraphs with compatible input/output contracts.
+- Compare does **not** require internal topology or operator structure to match.
+- ONNX is managed on the extension host side; the webview receives render snapshots rather than full model binaries.
+
+## Platform Support
+
+- Bundled ONNX Runtime native binaries target `linux x64` and `windows x64`.
+- `darwin` and `arm64` runtimes are intentionally excluded from the VSIX to control package size.
+- The packaged VSIX was validated by extracting the archive and running the host-side smoke flow against the bundled Linux x64 runtime.
+
+## Offline Test Model Generation
+
+Generate local ONNX fixtures without downloading public models:
 
 ```bash
-cd /home/zhaochen/net_vsix
-npx @vscode/vsce ls
-mkdir -p dist
-npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.5.vsix
+npm run generate:testmodels
 ```
 
-## VSCode 安装
+This writes models into `testdata/generated/`, including:
+
+- `large-matmul-singlefile.onnx`
+- `large-matmul-external-data.onnx`
+- `branch-crop-small.onnx`
+- `dual-io-compare-a.onnx`
+- `dual-io-compare-b.onnx`
+
+## Smoke Test
+
+Run a host-side smoke test against a generated model:
 
 ```bash
-cd /home/zhaochen/net_vsix
+node scripts/smoke_workbench.js testdata/generated/branch-crop-small.onnx
+```
+
+## VSIX Packaging
+
+```bash
+npm install
+npx @vscode/vsce package -o dist/netron-vscode-workbench-0.1.0.vsix
+```
+
+## VS Code Install
+
+```bash
 code --uninstall-extension local.netron-vscode-preview || true
-code --install-extension dist/netron-vscode-preview-0.0.5.vsix --force
+code --install-extension dist/netron-vscode-workbench-0.1.0.vsix --force
 ```
-
-## 命令验证
-
-```bash
-code --list-extensions --show-versions | rg local.netron-vscode-preview
-```
-
-Expected output includes:
-
-- `local.netron-vscode-preview@0.0.5`
-
-## 功能验证（NNJS / Crop / Screenshot）
-
-In VSCode:
-
-- Press `Ctrl+Shift+P` and run `Netron: Preview Model`.
-- Open a model and confirm `NNJS Tools` appears in the top-right area.
-- Click `Convert To NNJS`, then `Save NNJS`.
-- Expand `Crop`, use `Select Start Tensor` and `Select End Tensor`.
-- Click the same tensor edge twice to verify select/unselect behavior.
-- Multi-select multiple start/end tensors, then click `Confirm Crop`.
-- Verify the graph updates and screenshot is cached in memory.
-- Click `Save Crop Screenshot` and `Copy Crop Screenshot`.

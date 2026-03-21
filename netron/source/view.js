@@ -2914,6 +2914,8 @@ view.Sidebar = class {
                 content.replaceChildren();
             }
         });
+        this._resizeSidebarHandler = () => this._updateLayout();
+        this._host.window.addEventListener('resize', this._resizeSidebarHandler);
     }
 
     _element(id) {
@@ -2956,10 +2958,41 @@ view.Sidebar = class {
         return Array.isArray(element) ? element : [element];
     }
 
+    _metrics() {
+        const sidebar = this._element('sidebar');
+        const documentElement = this._host.document.documentElement;
+        const body = this._host.document.body;
+        const viewportWidth = Math.max(
+            this._host.window.innerWidth || 0,
+            documentElement ? documentElement.clientWidth : 0,
+            body ? body.clientWidth : 0
+        );
+        const fontSize = sidebar ? parseFloat(this._host.window.getComputedStyle(sidebar).fontSize) || 12 : 12;
+        const sidebarWidth = Math.min(viewportWidth * 0.6, 42 * fontSize);
+        const targetWidth = Math.max(viewportWidth * 0.4, viewportWidth - sidebarWidth);
+        return {
+            sidebarWidth: Math.round(sidebarWidth),
+            targetWidth: Math.round(targetWidth)
+        };
+    }
+
+    _updateLayout() {
+        const sidebar = this._element('sidebar');
+        const container = this._element('target');
+        const { sidebarWidth, targetWidth } = this._metrics();
+        sidebar.style.width = `${sidebarWidth}px`;
+        if (this._stack.length > 0) {
+            sidebar.style.right = '0px';
+            container.style.width = `${targetWidth}px`;
+        } else {
+            sidebar.style.right = `${-sidebarWidth}px`;
+            container.style.width = '100%';
+        }
+    }
+
     _update(stack) {
         const sidebar = this._element('sidebar');
         const element = this._element('sidebar-content');
-        const container = this._element('target');
         const closeButton = this._element('sidebar-closebutton');
         closeButton.removeEventListener('click', this._closeSidebarHandler);
         this._host.document.removeEventListener('keydown', this._closeSidebarKeyDownHandler);
@@ -2984,22 +3017,19 @@ view.Sidebar = class {
             } else {
                 element.replaceChildren(entry.element);
             }
-            sidebar.style.width = 'min(calc(100% * 0.6), 42em)';
-            sidebar.style.right = 0;
             sidebar.style.opacity = 1;
+            this._updateLayout();
             this._host.document.addEventListener('keydown', this._closeSidebarKeyDownHandler);
-            container.style.width = 'max(40vw, calc(100vw - 42em))';
             const content = entry.content;
             if (content && content.activate) {
                 content.activate();
             }
         } else {
-            sidebar.style.right = 'calc(0px - min(calc(100% * 0.6), 42em))';
             sidebar.style.opacity = 0;
+            this._updateLayout();
             const clone = element.cloneNode(true);
             element.parentNode.replaceChild(clone, element);
-            container.style.width = '100%';
-            container.focus();
+            this._element('target').focus();
         }
     }
 };
@@ -3814,6 +3844,56 @@ view.TensorView = class extends view.Expander {
         const content = this.createElement('pre');
         const value = this._value;
         const tensor = this._tensor;
+        const renderPreview = () => {
+            const preview = value && value.preview ? value.preview : null;
+            if (!preview) {
+                return false;
+            }
+            if (preview.error) {
+                content.textContent = preview.error;
+                return true;
+            }
+            const lines = ['Preview only'];
+            if (preview.dataType) {
+                lines.push(`dtype: ${preview.dataType}`);
+            }
+            if (Array.isArray(preview.shape)) {
+                lines.push(`shape: [${preview.shape.map((item) => item === null || item === undefined ? '?' : item).join(', ')}]`);
+            }
+            if (preview.location) {
+                lines.push(`location: ${preview.location}`);
+            }
+            if (preview.layout) {
+                lines.push(`layout: ${preview.layout}`);
+            }
+            if (preview.elementCount !== undefined && preview.elementCount !== null) {
+                lines.push(`elements: ${preview.elementCount}`);
+            }
+            if (preview.truncated) {
+                lines.push(`sample: first ${preview.sampleCount || 0} values`);
+            }
+            if (preview.stats) {
+                const stats = [];
+                if (preview.stats.min !== undefined && preview.stats.min !== null) {
+                    stats.push(`min=${preview.stats.min}`);
+                }
+                if (preview.stats.max !== undefined && preview.stats.max !== null) {
+                    stats.push(`max=${preview.stats.max}`);
+                }
+                if (preview.stats.mean !== undefined && preview.stats.mean !== null) {
+                    stats.push(`mean=${preview.stats.mean}`);
+                }
+                if (stats.length > 0) {
+                    lines.push(`stats: ${stats.join(', ')}`);
+                }
+            }
+            if (Array.isArray(preview.sampleValues) && preview.sampleValues.length > 0) {
+                lines.push('');
+                lines.push(JSON.stringify(preview.sampleValues, null, 2));
+            }
+            content.textContent = lines.join('\n');
+            return true;
+        };
         if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
             content.innerHTML = `Tensor encoding '${tensor.layout}' is not implemented.`;
         } else if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
@@ -3826,6 +3906,9 @@ view.TensorView = class extends view.Expander {
             content.innerHTML = '&#x23F3';
             const promise = value.peek && !value.peek() ? value.read() : Promise.resolve();
             promise.then(() => {
+                if (renderPreview()) {
+                    return;
+                }
                 if (tensor.empty) {
                     content.innerHTML = 'Tensor data is empty.';
                 } else {

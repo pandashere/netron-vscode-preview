@@ -2,3 +2,5 @@ dist/
 *.vsix
 .vscode/
 .DS_Store
+testdata/generated/
+node_modules/

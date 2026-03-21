@@ -1,3 +1,4 @@
+import { ONNXWorkbenchUI } from './workbench-ui.js';
 /* eslint-disable no-var */
 
 window.exports = {};
@@ -1809,8 +1810,8 @@ window.addEventListener('unhandledrejection', function(event) {
             const VSCodeHost = createVSCodeHostClass();
             const host = new VSCodeHost();
             window.__view__ = new window.exports.view.View(host);
-            window.__nnjsToolbar = new NNJSToolbar(host, window.__view__);
-            window.__nnjsToolbar.attach();
+            window.__onnxWorkbenchUI = new ONNXWorkbenchUI(host, window.__view__);
+            window.__onnxWorkbenchUI.attach();
             window.__view__.start();
             postModelLog('info', 'bootstrap completed', {
                 phase: 'bootstrap',

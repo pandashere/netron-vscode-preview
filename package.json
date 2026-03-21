@@ -1,8 +1,8 @@
 {
   "name": "netron-vscode-preview",
-  "displayName": "Netron VSCode Preview",
-  "description": "Preview neural network models in VS Code with Netron parser support, NNJS export, and crop workflow.",
-  "version": "0.0.5",
+  "displayName": "Netron VSCode Workbench",
+  "description": "Preview ONNX models in VS Code with host-managed crop, export, inference, and compare workflows.",
+  "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -18,20 +18,50 @@
   ],
   "main": "./extension.js",
   "scripts": {
-    "package:vsix": "npx @vscode/vsce package -o dist/netron-vscode-preview-0.0.5.vsix",
-    "install:vsix": "code --install-extension dist/netron-vscode-preview-0.0.5.vsix --force",
-    "verify:vsix": "code --list-extensions --show-versions"
+    "package:vsix": "npx @vscode/vsce package -o dist/netron-vscode-workbench-0.1.0.vsix",
+    "install:vsix": "code --install-extension dist/netron-vscode-workbench-0.1.0.vsix --force",
+    "verify:vsix": "code --list-extensions --show-versions",
+    "generate:testmodels": "python3 scripts/generate_onnx_test_models.py --output-dir testdata/generated"
   },
   "activationEvents": [
-    "onCommand:netronPreview.openPreview"
+    "onCommand:netronPreview.openPreview",
+    "onView:netronCompare.compareView",
+    "onCommand:netronPreview.openCompareCenter",
+    "onCommand:netronPreview.clearCompareCenter"
   ],
   "contributes": {
     "commands": [
       {
         "command": "netronPreview.openPreview",
         "title": "Netron: Preview Model"
+      },
+      {
+        "command": "netronPreview.openCompareCenter",
+        "title": "Netron: Focus Compare"
+      },
+      {
+        "command": "netronPreview.clearCompareCenter",
+        "title": "Netron: Clear Compare"
       }
     ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "netronComparePanel",
+          "title": "Netron Compare",
+          "icon": "media/netron-compare.svg"
+        }
+      ]
+    },
+    "views": {
+      "netronComparePanel": [
+        {
+          "type": "webview",
+          "id": "netronCompare.compareView",
+          "name": "Compare"
+        }
+      ]
+    },
     "menus": {
       "explorer/context": [
         {
@@ -41,5 +71,10 @@
         }
       ]
     }
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "onnx-proto": "^8.0.1",
+    "onnxruntime-node": "^1.24.3"
   }
 }
