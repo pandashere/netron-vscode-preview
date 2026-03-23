@@ -26,11 +26,15 @@ view.View = class {
         this._model = null;
         this._path = [];
         this._selection = [];
+        this._canvasScrollbars = null;
         this._sidebar = new view.Sidebar(this._host);
         this._find = null;
         this._modelFactoryService = new view.ModelFactoryService(this._host);
         this._modelFactoryService.import();
         this._worker = this._host.environment('serial') ? null : new view.Worker(this._host);
+        if (this._host.window.ResizeObserver) {
+            this._canvasScrollbarResizeObserver = new this._host.window.ResizeObserver(() => this._syncCanvasScrollbars());
+        }
     }
 
     async start() {
@@ -419,6 +423,147 @@ view.View = class {
 
     _element(id) {
         return this._host.document.getElementById(id);
+    }
+
+    _createCanvasScrollbar(direction) {
+        const document = this._host.document;
+        const element = document.createElement('div');
+        element.className = `target-scrollbar ${direction}`;
+        const track = document.createElement('div');
+        track.className = 'target-scrollbar-track';
+        const thumb = document.createElement('div');
+        thumb.className = 'target-scrollbar-thumb';
+        element.appendChild(track);
+        element.appendChild(thumb);
+        return { element, track, thumb, direction };
+    }
+
+    _installCanvasScrollbarHandlers(entry) {
+        const axis = entry.direction === 'vertical' ? 'vertical' : 'horizontal';
+        const pointerDownTrack = (event) => {
+            if (!this._canvasScrollbars || !this._target || event.target === entry.thumb) {
+                return;
+            }
+            const target = this._element('target');
+            if (!target) {
+                return;
+            }
+            const rect = entry.element.getBoundingClientRect();
+            const trackLength = axis === 'vertical' ? rect.height : rect.width;
+            const thumbLength = axis === 'vertical' ? Math.max(entry.thumb.offsetHeight, 36) : Math.max(entry.thumb.offsetWidth, 36);
+            const pointerOffset = axis === 'vertical' ? event.clientY - rect.top : event.clientX - rect.left;
+            this._setCanvasScrollFromOffset(axis, pointerOffset - (thumbLength / 2), trackLength, thumbLength);
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        const pointerDownThumb = (event) => {
+            if (!this._canvasScrollbars || !this._target) {
+                return;
+            }
+            const target = this._element('target');
+            if (!target) {
+                return;
+            }
+            const rect = entry.element.getBoundingClientRect();
+            const trackLength = axis === 'vertical' ? rect.height : rect.width;
+            const thumbLength = axis === 'vertical' ? Math.max(entry.thumb.offsetHeight, 36) : Math.max(entry.thumb.offsetWidth, 36);
+            const startPointer = axis === 'vertical' ? event.clientY : event.clientX;
+            const startOffset = axis === 'vertical'
+                ? parseFloat(entry.thumb.style.top || '0')
+                : parseFloat(entry.thumb.style.left || '0');
+            const move = (pointerEvent) => {
+                const currentPointer = axis === 'vertical' ? pointerEvent.clientY : pointerEvent.clientX;
+                this._setCanvasScrollFromOffset(axis, startOffset + (currentPointer - startPointer), trackLength, thumbLength);
+                pointerEvent.preventDefault();
+            };
+            const up = () => {
+                this._host.window.removeEventListener('pointermove', move);
+                this._host.window.removeEventListener('pointerup', up);
+                this._host.window.removeEventListener('pointercancel', up);
+            };
+            this._host.window.addEventListener('pointermove', move);
+            this._host.window.addEventListener('pointerup', up);
+            this._host.window.addEventListener('pointercancel', up);
+            event.preventDefault();
+            event.stopPropagation();
+        };
+        entry.element.addEventListener('pointerdown', pointerDownTrack);
+        entry.thumb.addEventListener('pointerdown', pointerDownThumb);
+    }
+
+    _ensureCanvasScrollbars() {
+        const target = this._element('target');
+        const overlay = this._element('target-overlay');
+        if (!target || !overlay) {
+            return;
+        }
+        if (!this._canvasScrollbars || !this._canvasScrollbars.vertical.element.isConnected || !this._canvasScrollbars.horizontal.element.isConnected) {
+            const vertical = this._createCanvasScrollbar('vertical');
+            const horizontal = this._createCanvasScrollbar('horizontal');
+            this._installCanvasScrollbarHandlers(vertical);
+            this._installCanvasScrollbarHandlers(horizontal);
+            overlay.appendChild(vertical.element);
+            overlay.appendChild(horizontal.element);
+            this._canvasScrollbars = { vertical, horizontal };
+            if (this._canvasScrollbarResizeObserver) {
+                this._canvasScrollbarResizeObserver.disconnect();
+                this._canvasScrollbarResizeObserver.observe(target);
+            }
+        }
+    }
+
+    _setCanvasScrollFromOffset(axis, offset, trackLength, thumbLength) {
+        const target = this._element('target');
+        if (!target) {
+            return;
+        }
+        const maxOffset = Math.max(0, trackLength - thumbLength);
+        const clampedOffset = Math.max(0, Math.min(offset, maxOffset));
+        if (axis === 'vertical') {
+            const maxScrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
+            const ratio = maxOffset > 0 ? clampedOffset / maxOffset : 0;
+            target.scrollTop = ratio * maxScrollTop;
+        } else {
+            const maxScrollLeft = Math.max(0, target.scrollWidth - target.clientWidth);
+            const ratio = maxOffset > 0 ? clampedOffset / maxOffset : 0;
+            target.scrollLeft = ratio * maxScrollLeft;
+        }
+        this._syncCanvasScrollbars();
+    }
+
+    _syncCanvasScrollbars() {
+        const target = this._element('target');
+        if (!target || !this._canvasScrollbars) {
+            return;
+        }
+        const verticalMax = Math.max(0, target.scrollHeight - target.clientHeight);
+        const horizontalMax = Math.max(0, target.scrollWidth - target.clientWidth);
+        const showVertical = verticalMax > 0;
+        const showHorizontal = horizontalMax > 0;
+        const verticalTrackLength = Math.max(0, target.clientHeight - 16 - (showHorizontal ? 14 : 0));
+        const horizontalTrackLength = Math.max(0, target.clientWidth - 16 - (showVertical ? 14 : 0));
+        const verticalBar = this._canvasScrollbars.vertical;
+        const horizontalBar = this._canvasScrollbars.horizontal;
+        verticalBar.element.style.height = `${verticalTrackLength}px`;
+        horizontalBar.element.style.width = `${horizontalTrackLength}px`;
+        verticalBar.element.classList.toggle('visible', showVertical && verticalTrackLength > 0);
+        horizontalBar.element.classList.toggle('visible', showHorizontal && horizontalTrackLength > 0);
+        if (showVertical && verticalTrackLength > 0) {
+            let thumbHeight = Math.round(verticalTrackLength * (target.clientHeight / Math.max(target.scrollHeight, target.clientHeight)));
+            thumbHeight = Math.max(Math.min(verticalTrackLength, thumbHeight), Math.min(36, verticalTrackLength));
+            const maxOffset = Math.max(0, verticalTrackLength - thumbHeight);
+            const offset = verticalMax > 0 ? (target.scrollTop / verticalMax) * maxOffset : 0;
+            verticalBar.thumb.style.height = `${thumbHeight}px`;
+            verticalBar.thumb.style.top = `${offset}px`;
+        }
+        if (showHorizontal && horizontalTrackLength > 0) {
+            let thumbWidth = Math.round(horizontalTrackLength * (target.clientWidth / Math.max(target.scrollWidth, target.clientWidth)));
+            thumbWidth = Math.max(Math.min(horizontalTrackLength, thumbWidth), Math.min(36, horizontalTrackLength));
+            const maxOffset = Math.max(0, horizontalTrackLength - thumbWidth);
+            const offset = horizontalMax > 0 ? (target.scrollLeft / horizontalMax) * maxOffset : 0;
+            horizontalBar.thumb.style.width = `${thumbWidth}px`;
+            horizontalBar.thumb.style.left = `${offset}px`;
+        }
     }
 
     zoomIn() {
@@ -825,6 +970,8 @@ view.View = class {
                 viewGraph.update();
                 viewGraph.restore(state);
                 this.target = viewGraph;
+                this._ensureCanvasScrollbars();
+                this._syncCanvasScrollbars();
             }
         }
         return status;
@@ -2138,10 +2285,7 @@ view.Graph = class extends grapher.Graph {
         const document = this.host.document;
         const container = document.getElementById('target');
         const canvas = document.getElementById('canvas');
-        const limit = this.view.options.direction === 'vertical' ?
-            container.clientHeight / this._height :
-            container.clientWidth / this._width;
-        const min = Math.min(Math.max(limit, 0.15), 1);
+        const min = 0.15;
         zoom = Math.max(min, Math.min(zoom, 1.4));
         const scrollLeft = this._scrollLeft || container.scrollLeft;
         const scrollTop = this._scrollTop || container.scrollTop;
@@ -2156,6 +2300,7 @@ view.Graph = class extends grapher.Graph {
         container.scrollLeft = this._scrollLeft;
         container.scrollTop = this._scrollTop;
         this._zoom = zoom;
+        this.view._syncCanvasScrollbars();
     }
 
     _pointerDownHandler(e) {
@@ -2287,6 +2432,7 @@ view.Graph = class extends grapher.Graph {
         if (this._scrollTop && e.target.scrollTop !== Math.floor(this._scrollTop)) {
             delete this._scrollTop;
         }
+        this.view._syncCanvasScrollbars();
     }
 
     _wheelHandler(e) {
@@ -2898,6 +3044,9 @@ view.Sidebar = class {
     constructor(host) {
         this._host = host;
         this._stack = [];
+        this._scrollElement = null;
+        this._scrollHandler = () => this._scheduleScrollbarSync();
+        this._scrollSyncPending = false;
         const pop = () => this._update(this._stack.slice(0, -1));
         this._closeSidebarHandler = () => pop();
         this._closeSidebarKeyDownHandler = (e) => {
@@ -2908,14 +3057,31 @@ view.Sidebar = class {
             }
         };
         const sidebar = this._element('sidebar');
+        this._scrollbar = this._element('sidebar-scrollbar');
+        this._scrollbarThumb = this._element('sidebar-scrollbar-thumb');
+        if (this._scrollbar) {
+            this._scrollbar.addEventListener('pointerdown', (event) => this._scrollbarTrackPointerDown(event));
+        }
+        if (this._scrollbarThumb) {
+            this._scrollbarThumb.addEventListener('pointerdown', (event) => this._scrollbarThumbPointerDown(event));
+        }
         sidebar.addEventListener('transitionend', (event) => {
             if (event.propertyName === 'opacity' && sidebar.style.opacity === '0') {
                 const content = this._element('sidebar-content');
                 content.replaceChildren();
             }
         });
-        this._resizeSidebarHandler = () => this._updateLayout();
+        this._resizeSidebarHandler = () => {
+            this._updateLayout();
+            this._scheduleScrollbarSync();
+        };
         this._host.window.addEventListener('resize', this._resizeSidebarHandler);
+        if (this._host.window.ResizeObserver) {
+            this._scrollResizeObserver = new this._host.window.ResizeObserver(() => this._scheduleScrollbarSync());
+        }
+        if (this._host.window.MutationObserver) {
+            this._scrollMutationObserver = new this._host.window.MutationObserver(() => this._scheduleScrollbarSync());
+        }
     }
 
     _element(id) {
@@ -2976,6 +3142,133 @@ view.Sidebar = class {
         };
     }
 
+    _activeScrollElement() {
+        const content = this._element('sidebar-content');
+        return content ? content.querySelector('.sidebar-object, .sidebar-find-content, .sidebar-documentation') : null;
+    }
+
+    _bindScrollElement(element) {
+        if (this._scrollElement === element) {
+            return;
+        }
+        if (this._scrollElement) {
+            this._scrollElement.removeEventListener('scroll', this._scrollHandler);
+        }
+        if (this._scrollResizeObserver) {
+            this._scrollResizeObserver.disconnect();
+        }
+        if (this._scrollMutationObserver) {
+            this._scrollMutationObserver.disconnect();
+        }
+        this._scrollElement = element || null;
+        if (this._scrollElement) {
+            this._scrollElement.addEventListener('scroll', this._scrollHandler, { passive: true });
+            if (this._scrollResizeObserver) {
+                this._scrollResizeObserver.observe(this._scrollElement);
+            }
+            if (this._scrollMutationObserver) {
+                this._scrollMutationObserver.observe(this._scrollElement, { childList: true, subtree: true, attributes: true, characterData: true });
+            }
+        }
+    }
+
+    _scheduleScrollbarSync() {
+        if (this._scrollSyncPending) {
+            return;
+        }
+        this._scrollSyncPending = true;
+        this._host.window.requestAnimationFrame(() => {
+            this._scrollSyncPending = false;
+            this._syncScrollbar();
+        });
+    }
+
+    _setScrollFromOffset(offset, trackHeight, thumbHeight) {
+        if (!this._scrollElement) {
+            return;
+        }
+        const maxOffset = Math.max(0, trackHeight - thumbHeight);
+        const clampedOffset = Math.max(0, Math.min(offset, maxOffset));
+        const maxScroll = Math.max(0, this._scrollElement.scrollHeight - this._scrollElement.clientHeight);
+        const ratio = maxOffset > 0 ? clampedOffset / maxOffset : 0;
+        this._scrollElement.scrollTop = ratio * maxScroll;
+        this._scheduleScrollbarSync();
+    }
+
+    _scrollbarTrackPointerDown(event) {
+        if (!this._scrollElement || !this._scrollbar || event.target === this._scrollbarThumb) {
+            return;
+        }
+        const trackHeight = Math.max(0, this._scrollbar.clientHeight - 20);
+        const thumbHeight = this._scrollbarThumb ? Math.max(this._scrollbarThumb.offsetHeight, 36) : 36;
+        const rect = this._scrollbar.getBoundingClientRect();
+        const offset = event.clientY - rect.top - 10 - (thumbHeight / 2);
+        this._setScrollFromOffset(offset, trackHeight, thumbHeight);
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    _scrollbarThumbPointerDown(event) {
+        if (!this._scrollElement || !this._scrollbar || !this._scrollbarThumb) {
+            return;
+        }
+        const trackHeight = Math.max(0, this._scrollbar.clientHeight - 20);
+        const thumbHeight = Math.max(this._scrollbarThumb.offsetHeight, 36);
+        const startY = event.clientY;
+        const startTop = (parseFloat(this._scrollbarThumb.style.top) || 10) - 10;
+        const move = (pointerEvent) => {
+            const offset = startTop + (pointerEvent.clientY - startY);
+            this._setScrollFromOffset(offset, trackHeight, thumbHeight);
+            pointerEvent.preventDefault();
+        };
+        const up = () => {
+            this._host.window.removeEventListener('pointermove', move);
+            this._host.window.removeEventListener('pointerup', up);
+            this._host.window.removeEventListener('pointercancel', up);
+        };
+        this._host.window.addEventListener('pointermove', move);
+        this._host.window.addEventListener('pointerup', up);
+        this._host.window.addEventListener('pointercancel', up);
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    _syncScrollbar() {
+        if (!this._scrollbar || !this._scrollbarThumb || this._stack.length === 0) {
+            if (this._scrollbar) {
+                this._scrollbar.classList.remove('visible');
+            }
+            return;
+        }
+        const scrollElement = this._activeScrollElement();
+        const content = this._element('sidebar-content');
+        this._bindScrollElement(scrollElement);
+        if (!scrollElement) {
+            this._scrollbar.classList.remove('visible');
+            return;
+        }
+        if (content) {
+            this._scrollbar.style.top = `${content.offsetTop}px`;
+            this._scrollbar.style.height = `${content.clientHeight}px`;
+            this._scrollbar.style.bottom = 'auto';
+        }
+        const trackHeight = Math.max(0, this._scrollbar.clientHeight - 20);
+        if (trackHeight <= 0) {
+            this._scrollbar.classList.remove('visible');
+            return;
+        }
+        const clientHeight = Math.max(1, scrollElement.clientHeight);
+        const scrollHeight = Math.max(clientHeight, scrollElement.scrollHeight);
+        const maxScroll = Math.max(0, scrollHeight - clientHeight);
+        let thumbHeight = maxScroll > 0 ? Math.round(trackHeight * (clientHeight / scrollHeight)) : trackHeight;
+        thumbHeight = Math.max(Math.min(trackHeight, thumbHeight), Math.min(36, trackHeight));
+        const maxOffset = Math.max(0, trackHeight - thumbHeight);
+        const offset = maxScroll > 0 ? (scrollElement.scrollTop / maxScroll) * maxOffset : 0;
+        this._scrollbarThumb.style.height = `${thumbHeight}px`;
+        this._scrollbarThumb.style.top = `${10 + offset}px`;
+        this._scrollbar.classList.add('visible');
+    }
+
     _updateLayout() {
         const sidebar = this._element('sidebar');
         const container = this._element('target');
@@ -2988,6 +3281,7 @@ view.Sidebar = class {
             sidebar.style.right = `${-sidebarWidth}px`;
             container.style.width = '100%';
         }
+        this._scheduleScrollbarSync();
     }
 
     _update(stack) {
@@ -3024,7 +3318,12 @@ view.Sidebar = class {
             if (content && content.activate) {
                 content.activate();
             }
+            this._scheduleScrollbarSync();
         } else {
+            this._bindScrollElement(null);
+            if (this._scrollbar) {
+                this._scrollbar.classList.remove('visible');
+            }
             sidebar.style.opacity = 0;
             this._updateLayout();
             const clone = element.cloneNode(true);

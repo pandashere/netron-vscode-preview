@@ -21,12 +21,24 @@ body { touch-action: none; overflow: hidden; width: 100%; height: 100%; margin: 
 button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "PingFang SC"; }
 .center { position: absolute; margin: auto; top: 0; right: 0; bottom: 0; left: 0; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .select { user-select: text; -webkit-user-select: text; -moz-user-select: text; }
-.target { display: flex; height: 100%; width: 100%; overflow: auto; outline: none; touch-action: pan-x pan-y; }
+.target-host { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.target { display: flex; height: 100%; width: 100%; overflow: auto; outline: none; touch-action: pan-x pan-y; -ms-overflow-style: none; scrollbar-width: none; }
+.target::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+.target-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.target-scrollbar { position: absolute; opacity: 0; pointer-events: none; transition: opacity 0.12s ease; z-index: 3; }
+.target-scrollbar.visible { opacity: 1; pointer-events: auto; }
+.target-scrollbar.vertical { top: 12px; right: 16px; width: 14px; }
+.target-scrollbar.horizontal { left: 12px; bottom: 16px; height: 14px; }
+.target-scrollbar-track { position: absolute; inset: 0; border-radius: 999px; background: rgba(127, 127, 127, 0.16); }
+.target-scrollbar-thumb { position: absolute; border-radius: 999px; background: rgba(110, 110, 110, 0.82); cursor: pointer; }
+.target-scrollbar.vertical .target-scrollbar-thumb { width: 8px; left: 3px; min-height: 36px; }
+.target-scrollbar.horizontal .target-scrollbar-thumb { height: 8px; top: 3px; min-width: 36px; }
+.target-scrollbar-thumb:hover { background: rgba(90, 90, 90, 0.92); }
 .canvas { margin: auto; flex-shrink: 0; text-rendering: geometricPrecision; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .open-file-dialog { display: none; }
 .default { background-color: #ffffff; }
 .default .logo { display: none; }
-.default .target { display: flex; opacity: 1; }
+    .default .target { display: flex; opacity: 1; }
 .default .toolbar { display: flex; }
 .toolbar { display: flex; align-items: center; position: absolute; bottom: 10px; left: 10px; padding: 0; margin: 0; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .toolbar button:focus { outline: 0; }
@@ -206,10 +218,10 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
 .sidebar-title { font-weight: bold; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; height: 20px; margin: 0; padding: 20px; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .sidebar-closebutton { padding: 8px 8px 8px 32px; text-decoration: none; font-size: 25px; color: #777777; opacity: 1.0; display: block; transition: 0.2s; position: absolute; top: 0; right: 15px; margin-left: 50px; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .sidebar-closebutton:hover { color: #242424; }
-.sidebar-content { display: flex; flex-direction: column; flex-grow: 1; height: 0; }
+.sidebar-content { display: flex; flex-direction: column; flex-grow: 1; height: 0; position: relative; }
 .sidebar-header { font-weight: bold; font-size: 12px; letter-spacing: 0.5px; text-transform: uppercase; height: 20px; margin: 0; margin-top: 30px; padding-top: 10px; padding-bottom: 10px; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .sidebar-section { font-weight: bold; font-size: 11px; text-transform: uppercase; line-height: 1.25; margin-top: 16px; margin-bottom: 16px; display: block; user-select: none; -webkit-user-select: none; -moz-user-select: none; cursor: default; }
-.sidebar-object { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: auto; }
+.sidebar-object { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable; -ms-overflow-style: none; scrollbar-width: none; }
 .sidebar-item { margin-bottom: 0px; display: block; }
 .sidebar-item-name { float: left; font-size: 11px; min-width: 95px; max-width: 95px; padding-right: 5px; padding-top: 7px; display: block; }
 .sidebar-item-name input { color: #777; font-family: inherit; font-size: inherit; color: inherit; background-color: inherit; width: 100%; text-align: right; margin: 0; padding: 0; border: 0; outline: none; text-overflow: ellipsis; }
@@ -253,12 +265,20 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
 .sidebar-find-toggle input[type="checkbox"]:not(:checked) + svg { fill: #ccc; stroke: #ccc; }
 .sidebar-find-toggle input[type="checkbox"]:checked + svg { fill: #555; stroke: #555; }
 .sidebar-find-toggle-icon { stroke: #555; fill: #555; width: 16px; height: 16px; }
-.sidebar-find-content { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: auto; list-style-type: none; margin: 0; }
+.sidebar-find-content { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable; -ms-overflow-style: none; scrollbar-width: none; list-style-type: none; margin: 0; }
 .sidebar-find-content li *:first-child { margin-right: 2px; }
 .sidebar-find-content li { color: #666; font-size: 13px; height: 22px; line-height: 22px; padding: 0 12px 0 12px; outline: 0; white-space: nowrap; border-radius: 3px; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
 .sidebar-find-content li:hover { background: #e5e5e5; color: #000; }
 .sidebar-find-content-icon { stroke: #555; fill: #555; float: left; width: 16px; height: 16px; padding: 3px; }
-.sidebar-documentation { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: auto; font-size: 13px; line-height: 1.5; margin: 0; }
+.sidebar-documentation { flex-grow: 1; padding: 0px 20px 20px 20px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable; -ms-overflow-style: none; scrollbar-width: none; font-size: 13px; line-height: 1.5; margin: 0; }
+.sidebar-object::-webkit-scrollbar,
+.sidebar-find-content::-webkit-scrollbar,
+.sidebar-documentation::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+.sidebar-scrollbar { position: absolute; top: 0; right: 2px; bottom: 0; width: 12px; opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+.sidebar-scrollbar.visible { opacity: 1; pointer-events: auto; }
+.sidebar-scrollbar-track { position: absolute; top: 10px; right: 2px; bottom: 10px; width: 8px; border-radius: 999px; background: rgba(127, 127, 127, 0.16); }
+.sidebar-scrollbar-thumb { position: absolute; top: 10px; right: 2px; width: 8px; min-height: 36px; border-radius: 999px; background: rgba(110, 110, 110, 0.82); cursor: pointer; }
+.sidebar-scrollbar-thumb:hover { background: rgba(90, 90, 90, 0.92); }
 .sidebar-documentation h1 { font-weight: bold; font-size: 13px; line-height: 1.25; border-bottom: 1px solid #e8e8e8; padding-bottom: 0.3em; margin-top: 0; margin-bottom: 16px; }
 .sidebar-documentation h2 { font-weight: bold; font-size: 13px; line-height: 1.25; margin-top: 20px; margin-bottom: 16px; text-transform: uppercase; border: 0; }
 .sidebar-documentation h3 { font-weight: bold; font-size: 11px; line-height: 1.25; }
@@ -277,6 +297,9 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
     .sidebar { background-color: #2d2d2d; color: #dfdfdf; border-left: 1px solid rgba(0, 0, 0, 0); }
     .sidebar-closebutton { padding: 8px 8px 8px 32px; text-decoration: none; font-size: 25px; color: #777777; opacity: 1.0; display: block; transition: 0.2s; position: absolute; top: 0; right: 15px; margin-left: 50px; user-select: none; -webkit-user-select: none; -moz-user-select: none; }
     .sidebar-closebutton:hover { color: #ffffff; }
+    .target-scrollbar-track { background: rgba(255, 255, 255, 0.14); }
+    .target-scrollbar-thumb { background: rgba(190, 190, 190, 0.9); }
+    .target-scrollbar-thumb:hover { background: rgba(230, 230, 230, 0.96); }
     .sidebar-item-value { background-color: #383838; border-color: #383838; }
     .sidebar-item-value-content { background-color: #3e3e3e; border-color: #3e3e3e; }
     .sidebar-item-value-line-border { border-color: rgba(0, 0, 0, 0.09); }
@@ -301,6 +324,9 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
     .sidebar-item-value-button { color: #888; }
     .sidebar-item-value-button svg use { fill: #888; stroke: #888; }
     .sidebar-item-value-button:hover svg use { fill: #e5e5e5; stroke: #e5e5e5; }
+    .sidebar-scrollbar-track { background: rgba(255, 255, 255, 0.14); }
+    .sidebar-scrollbar-thumb { background: rgba(190, 190, 190, 0.9); }
+    .sidebar-scrollbar-thumb:hover { background: rgba(230, 230, 230, 0.96); }
 }
 @media screen and (prefers-reduced-motion: reduce) {
 .menu { transition: none; }
@@ -309,12 +335,19 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
 </style>
 </head>
 <body class="welcome spinner">
-<div id="target" class="target" tabindex="0">
+<div id="target-host" class="target-host">
+    <div id="target" class="target" tabindex="0">
+    </div>
+    <div id="target-overlay" class="target-overlay" aria-hidden="true"></div>
 </div>
 <div id="sidebar" class="sidebar">
     <h1 id="sidebar-title" class="sidebar-title"></h1>
     <a id="sidebar-closebutton" class="sidebar-closebutton" href="javascript:void(0)" draggable="false">&times;</a>
     <div id="sidebar-content" class="sidebar-content"></div>
+    <div id="sidebar-scrollbar" class="sidebar-scrollbar" aria-hidden="true">
+        <div class="sidebar-scrollbar-track"></div>
+        <div id="sidebar-scrollbar-thumb" class="sidebar-scrollbar-thumb"></div>
+    </div>
     <svg width="0" height="0" display="none">
         <defs>
             <symbol id="sidebar-icon-node" viewBox="0 0 20 20">

@@ -73,6 +73,12 @@ Run a host-side smoke test against a generated model:
 node scripts/smoke_workbench.js testdata/generated/branch-crop-small.onnx
 ```
 
+Run the internal-crop compare regression smoke test:
+
+```bash
+npm run smoke:compare-internal
+```
+
 ## VSIX Packaging
 
 ```bash

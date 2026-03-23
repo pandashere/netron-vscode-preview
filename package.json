@@ -21,7 +21,10 @@
     "package:vsix": "npx @vscode/vsce package -o dist/netron-vscode-workbench-0.1.0.vsix",
     "install:vsix": "code --install-extension dist/netron-vscode-workbench-0.1.0.vsix --force",
     "verify:vsix": "code --list-extensions --show-versions",
-    "generate:testmodels": "python3 scripts/generate_onnx_test_models.py --output-dir testdata/generated"
+    "generate:testmodels": "python3 scripts/generate_onnx_test_models.py --output-dir testdata/generated",
+    "generate:vit-unet-3200": "python3 scripts/generate_vit_unet_3200_model.py",
+    "benchmark:vit-unet-layout": "python3 scripts/benchmark_vit_unet_layout.py",
+    "smoke:compare-internal": "node scripts/smoke_compare_internal_io.js"
   },
   "activationEvents": [
     "onCommand:netronPreview.openPreview",

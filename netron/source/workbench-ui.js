@@ -204,9 +204,11 @@ export class ONNXWorkbenchUI {
         this._elements = {};
         this._renderInProgress = false;
         this._suspendRefit = false;
+        this._autoFitOnResize = true;
         this._lastRenderRetryCount = 0;
         this._resizeTimer = null;
         this._resizeObserver = null;
+        this._viewportGuardsInstalled = false;
         this._tensorPreviewRequests = new Map();
     }
 
@@ -462,15 +464,15 @@ export class ONNXWorkbenchUI {
         this._elements.taskCompare = root.querySelector('#wb-task-compare');
     }
 
-    _scheduleRefit() {
-        if (this._renderInProgress || this._suspendRefit) {
+    _scheduleRefit(force = false) {
+        if ((!force && !this._autoFitOnResize) || this._renderInProgress || this._suspendRefit) {
             this._clearPendingRefit();
             return;
         }
         this._clearPendingRefit();
         this._resizeTimer = this.host.window.setTimeout(() => {
             this._resizeTimer = null;
-            this._fitActiveGraph();
+            this._fitActiveGraph({ force });
         }, 80);
     }
 
@@ -481,8 +483,9 @@ export class ONNXWorkbenchUI {
         }
     }
 
-    _fitActiveGraph() {
-        if (this._renderInProgress || this._suspendRefit) {
+    _fitActiveGraph(options = {}) {
+        const force = !!options.force;
+        if ((!force && !this._autoFitOnResize) || this._renderInProgress || this._suspendRefit) {
             return;
         }
         const target = this.view && this.view._target;
@@ -493,10 +496,62 @@ export class ONNXWorkbenchUI {
         try {
             container.scrollLeft = 0;
             container.scrollTop = 0;
-            target.zoom = 0.1;
+            const fitZoom = this._computeFitZoom(target, container);
+            target.zoom = fitZoom;
+            this._autoFitOnResize = true;
         } catch {
             // ignore fit errors
         }
+    }
+
+    _computeFitZoom(target, container) {
+        const width = Number(target && target._width);
+        const height = Number(target && target._height);
+        if (!width || !height || !container) {
+            return 1;
+        }
+        const limit = this.view && this.view.options && this.view.options.direction === 'vertical'
+            ? container.clientHeight / height
+            : container.clientWidth / width;
+        return Math.max(0.15, Math.min(limit, 1));
+    }
+
+    _disableAutoFit() {
+        this._autoFitOnResize = false;
+        this._clearPendingRefit();
+    }
+
+    _installViewportGuards(targetContainer) {
+        if (this._viewportGuardsInstalled || !targetContainer || !this.view) {
+            return;
+        }
+        const wrapZoomMethod = (name) => {
+            const original = this.view[name];
+            if (typeof original !== 'function') {
+                return;
+            }
+            this.view[name] = (...args) => {
+                this._disableAutoFit();
+                return original.apply(this.view, args);
+            };
+        };
+        wrapZoomMethod('zoomIn');
+        wrapZoomMethod('zoomOut');
+        wrapZoomMethod('resetZoom');
+        targetContainer.addEventListener('wheel', (event) => {
+            if (event.shiftKey || event.ctrlKey || (this.view.options && this.view.options.mousewheel === 'zoom')) {
+                this._disableAutoFit();
+            }
+        }, { capture: true, passive: true });
+        targetContainer.addEventListener('touchstart', (event) => {
+            if (event.touches && event.touches.length >= 2) {
+                this._disableAutoFit();
+            }
+        }, { capture: true, passive: true });
+        targetContainer.addEventListener('gesturestart', () => {
+            this._disableAutoFit();
+        }, { capture: true, passive: true });
+        this._viewportGuardsInstalled = true;
     }
 
     async _waitForFontsReady() {
@@ -677,6 +732,7 @@ export class ONNXWorkbenchUI {
             this._syncWorkbenchLayout();
         });
         const targetContainer = this.host.document.getElementById('target');
+        this._installViewportGuards(targetContainer);
         if (targetContainer && this.host.window.ResizeObserver) {
             this._resizeObserver = new this.host.window.ResizeObserver(() => this._scheduleRefit());
             this._resizeObserver.observe(targetContainer);
@@ -882,7 +938,7 @@ export class ONNXWorkbenchUI {
         this._renderImportedInputPreview();
         this._renderRunResult(null);
         this._updateButtons();
-        this._fitActiveGraph();
+        this._fitActiveGraph({ force: true });
         this._setStatus('ONNX model loaded. Select crop boundaries and confirm when ready.');
     }
 
@@ -898,7 +954,7 @@ export class ONNXWorkbenchUI {
         this._renderArtifactSummary();
         this._updateButtons();
         this._applyEdgeHighlights();
-        this._fitActiveGraph();
+        this._fitActiveGraph({ force: true });
         this._setStatus('Crop confirmed. Export, run inference, or assign to compare.');
         this._selectTab('crop');
         if (!this._elements.selectionBar.classList.contains('visible')) {
