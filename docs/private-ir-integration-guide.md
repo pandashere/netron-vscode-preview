@@ -64,12 +64,20 @@ Use the reference files already in this repository:
 - Analyzer examples:
   - `examples/tools/analyzers/line-count-analysis/`
   - `examples/tools/analyzers/deepseek-graph-analysis/`
+  - `examples/tools/analyzers/codex-one-shot-analysis/`
 
 The DeepSeek example is desensitized. It contains no API key. It reads the key from `DEEPSEEK_API_KEY` or `~/.netron/vscode-preview/secrets/deepseek_api_key`.
+The Codex example calls `codex exec` once with the exported graph text on stdin. It requires a working Codex CLI login on the same machine where the VS Code extension host runs.
 
 ## 2. Register A Provider
 
-1. Copy `examples/private-ir/my-ir-provider.js` to `lib/my-ir-provider.js`.
+This is the shortest copy-paste path. Do these steps first, then replace the parser/runtime internals.
+
+1. Copy the provider template:
+
+```bash
+cp examples/private-ir/my-ir-provider.js lib/my-ir-provider.js
+```
 
 2. In the copied file, change this import:
 
@@ -96,7 +104,54 @@ state.providerRegistry.register(createOnnxProvider(state.workbench, isOnnxFileNa
 state.providerRegistry.register(createMyIrProvider());
 ```
 
-5. Run:
+5. Start with this minimal provider if you do not want crop/runtime yet:
+
+```js
+const fs = require('fs');
+const path = require('path');
+
+function createMyIrProvider() {
+  const sessions = new Map();
+
+  return {
+    id: 'my-ir',
+    label: 'My Private IR',
+    capabilities: {},
+    canOpen(uri) {
+      const filePath = uri && (uri.fsPath || uri.path || String(uri));
+      return typeof filePath === 'string' && filePath.endsWith('.myir.json');
+    },
+    async loadModel(uri) {
+      const filePath = uri.fsPath || uri.path || String(uri);
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const sessionId = `my-ir-session-${sessions.size + 1}`;
+      const graph = raw.graph || { inputs: [], outputs: [], nodes: [], tensors: [] };
+      const snapshot = {
+        sessionId,
+        format: 'my-ir',
+        fileName: path.basename(filePath),
+        filePath,
+        graph: {
+          name: graph.name || sessionId,
+          inputs: (graph.inputs || []).map((name) => ({ name, values: [name] })),
+          outputs: (graph.outputs || []).map((name) => ({ name, values: [name] })),
+          nodes: [],
+          values: {}
+        }
+      };
+      const session = { id: sessionId, format: 'my-ir', filePath, snapshot };
+      sessions.set(sessionId, session);
+      return session;
+    }
+  };
+}
+
+module.exports = { createMyIrProvider };
+```
+
+This minimal version should open a private file and show graph inputs/outputs. It does not support crop, export, inference, compare, or AI yet.
+
+6. Run:
 
 ```bash
 node --check lib/my-ir-provider.js
@@ -105,14 +160,14 @@ npm run smoke:extension-provider-api
 npm run smoke:provider-registry
 ```
 
-6. Package and install:
+7. Package and install:
 
 ```bash
 npm run package:vsix
 code --install-extension dist/netron-vscode-workbench-0.1.0.vsix --force
 ```
 
-7. In VS Code, run `Developer: Reload Window`.
+8. In VS Code, run `Developer: Reload Window`.
 
 ## 3. Provider Lifecycle
 
@@ -138,6 +193,98 @@ const artifacts = new Map();  // artifactId -> confirmed crop
 ```
 
 Never store tensor payload data in text export context. Store tensor metadata only.
+
+## 3.1 No-Brainer Implementation Order
+
+Do not implement everything at once. Use this order and verify each step before moving on.
+
+Step A: open file and show any graph.
+
+```js
+capabilities: {}
+canOpen(uri) {
+  return String(uri.fsPath || uri.path || uri).endsWith('.myir.json');
+}
+async loadModel(uri) {
+  // Parse your file and return snapshot.sessionId + snapshot.graph.
+}
+```
+
+Verify:
+
+```bash
+node --check lib/my-ir-provider.js
+npm run smoke:provider-registry
+```
+
+Manual check: open `.myir.json` in VS Code. If it does not open, debug `canOpen()` and registration first.
+
+Step B: show correct nodes, colors, tensors, and initializers.
+
+```js
+type: {
+  name: node.type,
+  module: 'my.ir',
+  identifier: `my.ir.${node.type}`,
+  category: node.category || 'Custom'
+}
+```
+
+Use initializer objects:
+
+```js
+values.weight = {
+  type: { dataType: 'float32', shape: [64, 3, 3, 3] },
+  initializer: {
+    name: 'weight',
+    category: 'Initializer',
+    type: { dataType: 'float32', shape: [64, 3, 3, 3] },
+    location: 'runtime',
+    preview: null
+  }
+};
+```
+
+Step C: implement real crop.
+
+```js
+capabilities: { crop: true }
+async createCropArtifact({ sessionId, startKeys, endKeys }) {
+  const session = getSession(sessionId);
+  const croppedGraph = cropGraph(session.graph, startKeys, endKeys);
+  return makeArtifact(session, croppedGraph);
+}
+getCropTarget(artifactId) {
+  return buildCropTargetFromCoreGraph({ providerId: 'my-ir', model, artifact, graph: artifact.graph });
+}
+```
+
+Manual check: after Confirm Crop, the displayed graph must become smaller when the selected path is smaller.
+
+Step D: add text export and AI.
+
+```js
+capabilities: { crop: true, textExportContext: true }
+buildTextExportContext(artifactId) {
+  return buildTextExportContextFromCoreGraph({ providerId: 'my-ir', model, artifact, graph: artifact.graph });
+}
+```
+
+Manual check: Copy Export Text works with `Graph Edge List`, then AI Analyze works with `Line Count Analysis`.
+
+Step E: add export, inference, and compare.
+
+```js
+capabilities: {
+  crop: true,
+  textExportContext: true,
+  exportArtifact: true,
+  inference: true,
+  compare: true
+}
+```
+
+Use fake deterministic outputs for the first compare smoke. Replace them with real runtime outputs only after the UI path is stable.
 
 ## 4. Model Snapshot Schema
 
@@ -265,6 +412,219 @@ Tensor `kind` values should be one of:
 - `weight`
 
 Do not include raw tensor data in this graph. Shape and dtype are enough.
+
+## 5.1 Parser Template: JavaScript Only
+
+Use this when the private format is JSON or can be parsed directly in Node.js.
+
+```js
+const fs = require('fs');
+const path = require('path');
+const { normalizeCoreGraph, stableHash } = require('./text-export-context');
+
+function readPrivateModel(filePath) {
+  const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const graph = raw.graph || {};
+  const tensors = (graph.tensors || []).map((tensor) => ({
+    name: String(tensor.name),
+    dtype: String(tensor.dtype || 'float32').toLowerCase(),
+    rawDtype: tensor.rawDtype || tensor.dtype || 'float32',
+    shape: Array.isArray(tensor.shape) ? tensor.shape : [],
+    kind: tensor.kind || 'activation'
+  }));
+  const nodes = (graph.nodes || []).map((node, index) => ({
+    id: node.id || `node-${index}`,
+    name: node.name || node.id || `node-${index}`,
+    type: node.type || 'PrivateOp',
+    domain: node.domain || 'my.ir',
+    category: node.category || 'Custom',
+    inputs: (node.inputs || []).map((input) => ({ name: input.name || '', tensor: input.tensor })),
+    outputs: (node.outputs || []).map((output) => ({ name: output.name || '', tensor: output.tensor })),
+    attributes: node.attributes || {},
+    omittedAttributes: []
+  }));
+  const inputs = graph.inputs || [];
+  const outputs = graph.outputs || [];
+  const id = graph.id || `my-ir:${path.basename(filePath)}:${stableHash({ inputs, outputs, nodes })}`;
+  return normalizeCoreGraph({ id, name: graph.name || id, inputs, outputs, nodes, tensors });
+}
+```
+
+Then call it from `loadModel()`:
+
+```js
+async loadModel(uri) {
+  const filePath = uri.fsPath || uri.path || String(uri);
+  const graph = readPrivateModel(filePath);
+  const sessionId = `my-ir-session-${sessions.size + 1}`;
+  const session = {
+    id: sessionId,
+    format: 'my-ir',
+    filePath,
+    graph,
+    snapshot: {
+      sessionId,
+      format: 'my-ir',
+      fileName: path.basename(filePath),
+      filePath,
+      graph: graphToSnapshot(graph)
+    }
+  };
+  sessions.set(sessionId, session);
+  return session;
+}
+```
+
+## 5.2 Parser Template: Python Implementation Called From JS
+
+Use this when your private format already has a Python parser, vendor SDK, or runtime package.
+
+Create `lib/my-ir-python/parse_model.py`:
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+
+def tensor(name, dtype="float32", shape=None, kind="activation"):
+    return {
+        "name": name,
+        "dtype": dtype,
+        "rawDtype": dtype,
+        "shape": shape or [],
+        "kind": kind,
+    }
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: parse_model.py <model-path>")
+
+    model_path = sys.argv[1]
+
+    # Replace this block with your real parser:
+    #   import my_private_runtime
+    #   parsed = my_private_runtime.load(model_path)
+    with open(model_path, "r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+
+    graph = raw.get("graph", {})
+    result = {
+        "id": graph.get("id") or "my-ir:" + os.path.basename(model_path),
+        "name": graph.get("name") or os.path.basename(model_path),
+        "inputs": graph.get("inputs", ["input"]),
+        "outputs": graph.get("outputs", ["output"]),
+        "nodes": graph.get("nodes", []),
+        "tensors": graph.get("tensors", [
+            tensor("input", shape=[1, 3, 224, 224], kind="input"),
+            tensor("output", shape=[1, 1000], kind="output"),
+        ]),
+    }
+    print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Create a JS helper in `lib/my-ir-python-bridge.js`:
+
+```js
+const path = require('path');
+const { spawnFileJson } = require('./my-ir-spawn');
+const { normalizeCoreGraph } = require('./text-export-context');
+
+async function parseWithPython(filePath) {
+  const python = process.env.MY_IR_PYTHON || '/opt/my-ir/venv/bin/python';
+  const script = process.env.MY_IR_PARSE_SCRIPT
+    || path.join(__dirname, 'my-ir-python', 'parse_model.py');
+  const graph = await spawnFileJson(python, [script, filePath], {
+    env: {
+      MY_IR_HOME: process.env.MY_IR_HOME || '/opt/my-ir',
+      PYTHONPATH: process.env.MY_IR_PYTHONPATH || ''
+    },
+    timeoutMs: 120000
+  });
+  return normalizeCoreGraph(graph);
+}
+
+module.exports = { parseWithPython };
+```
+
+Create the reusable process helper `lib/my-ir-spawn.js`:
+
+```js
+const { spawn } = require('child_process');
+
+function spawnFileJson(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const child = spawn(command, args, {
+      cwd: options.cwd || process.cwd(),
+      shell: false,
+      env: {
+        ...process.env,
+        ...(options.env || {})
+      }
+    });
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      const error = new Error(`${command} timed out after ${options.timeoutMs || 120000}ms`);
+      error.stderr = stderr;
+      reject(error);
+    }, options.timeoutMs || 120000);
+    child.stdout.on('data', (chunk) => stdout += chunk.toString('utf8'));
+    child.stderr.on('data', (chunk) => stderr += chunk.toString('utf8'));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      error.stderr = stderr;
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const error = new Error(`${command} exited with code ${code}`);
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (error) {
+        error.message = `Failed to parse JSON from ${command}: ${error.message}`;
+        error.stdout = stdout.slice(0, 2000);
+        error.stderr = stderr.slice(0, 2000);
+        reject(error);
+      }
+    });
+  });
+}
+
+module.exports = { spawnFileJson };
+```
+
+Use the Python bridge in the provider:
+
+```js
+const { parseWithPython } = require('./my-ir-python-bridge');
+
+async loadModel(uri) {
+  const filePath = uri.fsPath || uri.path || String(uri);
+  const graph = await parseWithPython(filePath);
+  // Then build session + snapshot exactly like the JS-only path.
+}
+```
+
+Test Python directly before testing VS Code:
+
+```bash
+/opt/my-ir/venv/bin/python lib/my-ir-python/parse_model.py examples/private-ir/sample.myir.json
+MY_IR_PYTHON=/opt/my-ir/venv/bin/python node -e "require('./lib/my-ir-python-bridge').parseWithPython('examples/private-ir/sample.myir.json').then(console.log)"
+```
 
 ## 6. Crop Implementation
 
@@ -502,6 +862,75 @@ Rules:
 - Invalid manifests are shown in the UI as disabled entries with reasons.
 - The registry watches the directories and updates the dropdowns after file changes.
 
+Minimal Node exporter:
+
+```js
+#!/usr/bin/env node
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => input += chunk);
+process.stdin.on('end', () => {
+  const context = JSON.parse(input);
+  const graph = context.graph || {};
+  const lines = [];
+  for (const node of graph.nodes || []) {
+    for (const port of node.inputs || []) {
+      lines.push(`${port.tensor} -> ${node.name || node.id}`);
+    }
+    for (const port of node.outputs || []) {
+      lines.push(`${node.name || node.id} -> ${port.tensor}`);
+    }
+  }
+  process.stdout.write(lines.join('\n') || '(empty graph)');
+});
+```
+
+Minimal Python analyzer:
+
+```python
+#!/usr/bin/env python3
+import os
+import sys
+
+text = sys.stdin.read()
+if not text.strip():
+    raise SystemExit("empty analyzer input")
+
+debug = os.environ.get("MY_IR_DEBUG") == "1"
+if debug:
+    print(f"[analyzer] bytes={len(text.encode('utf-8'))}", file=sys.stderr)
+
+lines = [line for line in text.splitlines() if line.strip()]
+print("Python Analysis Result")
+print(f"Input lines: {len(lines)}")
+print(f"First line: {lines[0] if lines else '(empty)'}")
+```
+
+Manifest for that Python analyzer:
+
+```json
+{
+  "id": "my-python-analysis",
+  "label": "My Python Analysis",
+  "command": "/bin/bash",
+  "args": ["run-python-analysis.sh"],
+  "timeoutMs": 180000,
+  "env": {
+    "MY_IR_DEBUG": "1",
+    "MY_IR_PYTHON": "/opt/my-ir/venv/bin/python"
+  }
+}
+```
+
+`run-python-analysis.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+export PYTHONPATH="/opt/my-ir/python:${PYTHONPATH:-}"
+exec "${MY_IR_PYTHON:-/opt/my-ir/venv/bin/python}" my_python_analysis.py
+```
+
 Install examples:
 
 ```bash
@@ -511,6 +940,7 @@ cp -R examples/tools/exporters/crop-json-summary ~/.netron/vscode-preview/export
 cp -R examples/tools/exporters/graph-edge-list ~/.netron/vscode-preview/exporters/
 cp -R examples/tools/analyzers/line-count-analysis ~/.netron/vscode-preview/analyzers/
 cp -R examples/tools/analyzers/deepseek-graph-analysis ~/.netron/vscode-preview/analyzers/
+cp -R examples/tools/analyzers/codex-one-shot-analysis ~/.netron/vscode-preview/analyzers/
 ```
 
 Configure DeepSeek without storing secrets in this repository:
@@ -527,6 +957,158 @@ Alternative:
 ```bash
 export DEEPSEEK_API_KEY=<your-key-from-secret-manager>
 ```
+
+## 11.1 Environment Variables In Provider Code
+
+Provider code runs in the VS Code extension host. Read environment variables with `process.env`.
+
+```js
+const runtimeHome = process.env.MY_IR_HOME || '/opt/my-ir';
+const python = process.env.MY_IR_PYTHON || `${runtimeHome}/venv/bin/python`;
+const debug = process.env.MY_IR_DEBUG === '1';
+
+if (debug) {
+  console.error('[my-ir] runtimeHome=', runtimeHome);
+  console.error('[my-ir] python=', python);
+}
+```
+
+Use env values to choose runtime paths, not to store large data:
+
+```js
+const vendorLibPath = process.env.MY_IR_VENDOR_LIB || '/opt/my-ir/lib/libmyir.so';
+```
+
+When you need secrets, prefer a file under the user home:
+
+```js
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function readSecret() {
+  if (process.env.MY_IR_TOKEN) {
+    return process.env.MY_IR_TOKEN.trim();
+  }
+  const filePath = process.env.MY_IR_TOKEN_FILE
+    || path.join(os.homedir(), '.netron', 'vscode-preview', 'secrets', 'my_ir_token');
+  return fs.readFileSync(filePath, 'utf8').trim();
+}
+```
+
+## 11.2 Environment Variables In Exporter/Analyzer Scripts
+
+`exporter.json` and `analyzer.json` can inject env values:
+
+```json
+{
+  "id": "my-analyzer",
+  "label": "My Analyzer",
+  "command": "/bin/bash",
+  "args": ["run-analyzer.sh"],
+  "timeoutMs": 180000,
+  "env": {
+    "MY_IR_HOME": "/opt/my-ir",
+    "MY_IR_PYTHON": "/opt/my-ir/venv/bin/python",
+    "MY_IR_DEBUG": "1"
+  }
+}
+```
+
+Node script:
+
+```js
+const home = process.env.MY_IR_HOME || '/opt/my-ir';
+const debug = process.env.MY_IR_DEBUG === '1';
+```
+
+Python script:
+
+```python
+import os
+
+home = os.environ.get("MY_IR_HOME", "/opt/my-ir")
+debug = os.environ.get("MY_IR_DEBUG") == "1"
+```
+
+Bash wrapper:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+export MY_IR_HOME="${MY_IR_HOME:-/opt/my-ir}"
+export PYTHONPATH="${MY_IR_HOME}/python:${PYTHONPATH:-}"
+exec "${MY_IR_PYTHON:-${MY_IR_HOME}/venv/bin/python}" analyze.py
+```
+
+Do not put real API keys in the repository. Use `env`, shell exports, or secret files created outside git.
+
+## 11.3 Dependency Resolution Rules
+
+Use absolute paths for anything not guaranteed by VS Code:
+
+```json
+{
+  "command": "/bin/bash",
+  "args": ["run-analyzer.sh"]
+}
+```
+
+Do not rely on `python`, `node`, `codex`, or vendor CLIs being in PATH unless you verified the VS Code extension host sees the same PATH.
+
+Provider JS dependencies:
+
+```bash
+npm install --save <runtime-js-package>
+```
+
+Then import them from provider code:
+
+```js
+const runtime = require('<runtime-js-package>');
+```
+
+If the package is private or machine-local, keep it outside the extension bundle and load it through an absolute path:
+
+```js
+const runtimePath = process.env.MY_IR_NODE_RUNTIME || '/opt/my-ir/node-runtime';
+const runtime = require(runtimePath);
+```
+
+Python dependencies:
+
+```bash
+python3 -m venv /opt/my-ir/venv
+/opt/my-ir/venv/bin/pip install -r /opt/my-ir/requirements.txt
+```
+
+Call that exact interpreter:
+
+```js
+const python = process.env.MY_IR_PYTHON || '/opt/my-ir/venv/bin/python';
+```
+
+Conda dependencies:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+source /opt/miniconda3/etc/profile.d/conda.sh
+conda activate my-ir
+exec python analyze.py
+```
+
+Native/CUDA/vendor libraries:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+export LD_LIBRARY_PATH="/opt/my-ir/lib:${LD_LIBRARY_PATH:-}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+exec /opt/my-ir/venv/bin/python run_runtime.py
+```
+
+Recommended rule: make every provider/runtime/script command pass when copied into a plain SSH shell first. Then point the manifest/provider to the same absolute commands.
 
 ## 12. Remote SSH Environment
 
@@ -600,6 +1182,91 @@ Manual UI test:
 
 ## 14. Common Failures
 
+## 14.0 Where To Debug
+
+Use this table before changing code.
+
+| Symptom | Most likely component | What to debug first |
+|---|---|---|
+| File does not open from Explorer | Provider registration or `canOpen()` | Confirm provider is registered in `extension.js`; log the file path seen by `canOpen()` |
+| Blank or tiny graph opens | `loadModel()` snapshot | Print returned `snapshot.graph.nodes.length`, inputs, outputs, and values |
+| Nodes have wrong colors | Render snapshot | Check `node.type.category` in `graphToSnapshot()` |
+| Initializers do not display | Render snapshot values | Check `values[name].initializer` is an object, not `true` |
+| Confirm Crop does nothing | Provider crop implementation | Debug `createCropArtifact()`, `cropGraphSnapshot`, and artifact `graph.nodes.length` |
+| Copy Export Text disabled | Provider capability or artifact state | Check `capabilities.textExportContext`, confirmed crop, and `buildTextExportContext()` |
+| Exporter fails | User exporter script | Run the exporter manually with saved stdin JSON |
+| Analyzer exits with code 1 | User analyzer script | Run the analyzer manually with the exact exporter stdout |
+| Compare cannot bind | Provider `ioSignature` | Print both slots' input/output name, dtype, rank, shape |
+| Compare runs but values are nonsense | Runtime script | Confirm `runCompareArtifact()` returns real numeric values from the intended runtime |
+| Works locally but not Remote SSH | Environment/dependencies | Check the remote server has the same files, venv, secrets, PATH, and library paths |
+
+Provider debug stub:
+
+```js
+function debugLog(...args) {
+  if (process.env.MY_IR_DEBUG === '1') {
+    console.error('[my-ir]', ...args);
+  }
+}
+
+async loadModel(uri) {
+  const filePath = uri.fsPath || uri.path || String(uri);
+  debugLog('loadModel', filePath);
+  const graph = await parseWithPython(filePath);
+  debugLog('graph', {
+    inputs: graph.inputs,
+    outputs: graph.outputs,
+    nodes: graph.nodes.length,
+    tensors: graph.tensors.length
+  });
+  // build session...
+}
+```
+
+Exporter/analyzer debug stub:
+
+```js
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => input += chunk);
+process.stdin.on('end', () => {
+  if (process.env.MY_IR_DEBUG === '1') {
+    console.error('[tool] stdin bytes:', Buffer.byteLength(input));
+    console.error('[tool] cwd:', process.cwd());
+  }
+  process.stdout.write('debug ok');
+});
+```
+
+Python runtime debug stub:
+
+```python
+import json
+import os
+import sys
+
+def debug(*items):
+    if os.environ.get("MY_IR_DEBUG") == "1":
+        print("[my-ir-python]", *items, file=sys.stderr)
+
+debug("python", sys.executable)
+debug("cwd", os.getcwd())
+debug("PYTHONPATH", os.environ.get("PYTHONPATH", ""))
+debug("argv", sys.argv)
+
+print(json.dumps({"ok": True}))
+```
+
+Manual script replay:
+
+```bash
+# 1. Save provider export context from Copy Export Text or a smoke fixture.
+node examples/tools/exporters/graph-edge-list/graph-edge-list.js < /tmp/context.json > /tmp/graph.txt
+
+# 2. Replay analyzer exactly like the plugin does.
+MY_IR_DEBUG=1 node examples/tools/analyzers/line-count-analysis/line-count-analysis.js < /tmp/graph.txt
+```
+
 Crop button is disabled:
 
 - `snapshot.sessionId` is missing or does not match the session id.
@@ -637,6 +1304,13 @@ Analyzer is unavailable:
 - Manifest has invalid JSON.
 - Duplicate analyzer ids exist.
 - Environment variables in manifest are not strings.
+
+Codex One-Shot Analysis fails:
+
+- `codex` is not installed or is not in PATH for the VS Code extension host.
+- Codex is not logged in on the same local or Remote SSH machine.
+- The analyzer timed out while `codex exec` was running.
+- Set `CODEX_COMMAND`, `CODEX_MODEL`, `CODEX_WORKDIR`, or `CODEX_EXTRA_ARGS` in `analyzer.json` if your environment needs a wrapper or a specific profile.
 
 Compare cannot bind:
 

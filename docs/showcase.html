@@ -1,0 +1,1477 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Netron VSCode Workbench 功能展示</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111214;
+      --panel: #181a1d;
+      --panel-2: #202226;
+      --ink: #f5f2ea;
+      --muted: #b8b1a4;
+      --line: rgba(245, 242, 234, 0.14);
+      --line-strong: rgba(245, 242, 234, 0.24);
+      --cyan: #36d4bd;
+      --amber: #f4b44d;
+      --rose: #ef6f8a;
+      --green: #89c86b;
+      --violet: #9d8cff;
+      --steel: #8fb8de;
+      --shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(17, 18, 20, 0.86);
+      backdrop-filter: blur(16px);
+    }
+
+    .nav-inner {
+      height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: #f5f2ea;
+      padding: 4px;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 720;
+      white-space: nowrap;
+    }
+
+    .brand-subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+      white-space: nowrap;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .nav-links a {
+      padding: 8px 10px;
+      border-radius: 7px;
+    }
+
+    .nav-links a:hover {
+      color: var(--ink);
+      background: rgba(245, 242, 234, 0.07);
+    }
+
+    .hero {
+      min-height: calc(100vh - 68px);
+      display: grid;
+      grid-template-columns: minmax(0, 0.85fr) minmax(520px, 1.15fr);
+      gap: 42px;
+      align-items: center;
+      padding: 56px 0 42px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      border: 1px solid rgba(54, 212, 189, 0.36);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: #c9fff7;
+      background: rgba(54, 212, 189, 0.09);
+      font-size: 12px;
+      font-weight: 640;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--cyan);
+      box-shadow: 0 0 20px rgba(54, 212, 189, 0.8);
+    }
+
+    h1 {
+      margin: 22px 0 18px;
+      font-size: 68px;
+      line-height: 0.95;
+      letter-spacing: 0;
+      max-width: 780px;
+    }
+
+    .lead {
+      color: #d9d3c8;
+      font-size: 18px;
+      line-height: 1.65;
+      max-width: 670px;
+      margin: 0;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 42px;
+      border-radius: 8px;
+      border: 1px solid var(--line-strong);
+      padding: 0 14px;
+      font-size: 14px;
+      font-weight: 680;
+      color: var(--ink);
+      background: rgba(245, 242, 234, 0.08);
+    }
+
+    .button.primary {
+      border-color: rgba(54, 212, 189, 0.5);
+      background: #f5f2ea;
+      color: #111214;
+    }
+
+    .button svg {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 34px;
+      max-width: 660px;
+    }
+
+    .stat {
+      border-top: 1px solid var(--line-strong);
+      padding-top: 13px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.15;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 5px;
+    }
+
+    .workbench {
+      position: relative;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #141518;
+      box-shadow: var(--shadow);
+      min-height: 560px;
+    }
+
+    .workbench-top {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      background: #202226;
+    }
+
+    .traffic {
+      display: flex;
+      gap: 7px;
+      margin-right: 8px;
+    }
+
+    .traffic i {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: block;
+    }
+
+    .traffic i:nth-child(1) {
+      background: var(--rose);
+    }
+
+    .traffic i:nth-child(2) {
+      background: var(--amber);
+    }
+
+    .traffic i:nth-child(3) {
+      background: var(--green);
+    }
+
+    .crumb {
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .workbench-body {
+      display: grid;
+      grid-template-columns: 58px 1fr 306px;
+      min-height: 522px;
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: #191b1f;
+      padding: 12px 9px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .rail-item {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }
+
+    .rail-item.active {
+      border-color: rgba(54, 212, 189, 0.44);
+      background: rgba(54, 212, 189, 0.11);
+      color: var(--cyan);
+    }
+
+    .rail-item svg {
+      width: 19px;
+      height: 19px;
+    }
+
+    .graph-stage {
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(245, 242, 234, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245, 242, 234, 0.035) 1px, transparent 1px),
+        #101113;
+      background-size: 34px 34px;
+      padding: 28px;
+    }
+
+    .graph-svg {
+      width: 100%;
+      height: 362px;
+      display: block;
+    }
+
+    .node rect {
+      stroke-width: 1.2;
+      rx: 7;
+    }
+
+    .node text {
+      font-size: 12px;
+      font-weight: 650;
+      fill: #fffaf0;
+    }
+
+    .edge {
+      fill: none;
+      stroke: rgba(245, 242, 234, 0.38);
+      stroke-width: 2;
+    }
+
+    .edge.hot {
+      stroke: var(--cyan);
+      stroke-width: 2.8;
+    }
+
+    .tensor {
+      fill: #101113;
+      stroke: rgba(245, 242, 234, 0.26);
+    }
+
+    .tensor-text {
+      font-size: 11px;
+      fill: var(--muted);
+    }
+
+    .tools-pop {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 22px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: rgba(24, 26, 29, 0.96);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.36);
+      overflow: hidden;
+    }
+
+    .tools-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 9px 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tools-tabs span {
+      padding: 7px 9px;
+      border-radius: 7px 7px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 640;
+    }
+
+    .tools-tabs span.active {
+      color: #101113;
+      background: var(--cyan);
+    }
+
+    .tools-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .mini-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 74px;
+      background: rgba(245, 242, 234, 0.04);
+    }
+
+    .mini-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 7px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .chip {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 4px 7px;
+      font-size: 11px;
+      color: #e8e1d4;
+      background: rgba(245, 242, 234, 0.05);
+    }
+
+    .side-panel {
+      border-left: 1px solid var(--line);
+      background: #181a1d;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+    }
+
+    .side-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .side-header h2 {
+      font-size: 14px;
+      margin: 0;
+    }
+
+    .side-header p {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 6px 0 0;
+    }
+
+    .run-list {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .run-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px;
+      background: rgba(245, 242, 234, 0.04);
+    }
+
+    .run-card strong {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .run-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      margin-top: 6px;
+    }
+
+    .status-pill {
+      flex: 0 0 auto;
+      border: 1px solid rgba(137, 200, 107, 0.36);
+      border-radius: 999px;
+      padding: 3px 7px;
+      color: #c9f9bb;
+      font-size: 10px;
+      background: rgba(137, 200, 107, 0.09);
+    }
+
+    .side-footer {
+      padding: 13px 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    section {
+      padding: 84px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .delta-strip {
+      padding: 36px 0;
+      background: #15171a;
+    }
+
+    .delta-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .delta-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(245, 242, 234, 0.035);
+    }
+
+    .delta-card.workbench-side {
+      border-color: rgba(54, 212, 189, 0.34);
+      background: rgba(54, 212, 189, 0.055);
+    }
+
+    .delta-card h2 {
+      font-size: 18px;
+      line-height: 1.25;
+      margin: 0 0 14px;
+    }
+
+    .delta-card ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .delta-card li {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 8px;
+    }
+
+    .delta-card li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+      background: var(--line-strong);
+    }
+
+    .delta-card.workbench-side li::before {
+      background: var(--cyan);
+      box-shadow: 0 0 18px rgba(54, 212, 189, 0.42);
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.55fr);
+      gap: 32px;
+      align-items: end;
+      margin-bottom: 30px;
+    }
+
+    .section-kicker {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 720;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      font-size: 48px;
+      line-height: 1.04;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    .section-copy {
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 15px;
+      margin: 0;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .feature {
+      min-height: 310px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      background: linear-gradient(180deg, rgba(245, 242, 234, 0.055), rgba(245, 242, 234, 0.025));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--accent, var(--cyan));
+    }
+
+    .feature-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--line-strong);
+      display: grid;
+      place-items: center;
+      color: var(--accent, var(--cyan));
+      background: rgba(245, 242, 234, 0.04);
+      margin-bottom: 16px;
+    }
+
+    .feature-icon svg {
+      width: 19px;
+      height: 19px;
+    }
+
+    .feature h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .feature p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.58;
+      font-size: 14.5px;
+    }
+
+    .feature ul {
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      color: #d9d3c8;
+      font-size: 13px;
+      line-height: 1.48;
+    }
+
+    .feature li {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .feature li::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent, var(--cyan));
+      margin-top: 6px;
+      flex: 0 0 auto;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      counter-reset: step;
+    }
+
+    .flow-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--panel);
+      min-height: 170px;
+      position: relative;
+    }
+
+    .flow-card::before {
+      counter-increment: step;
+      content: "0" counter(step);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .flow-card h3 {
+      margin: 22px 0 8px;
+      font-size: 16px;
+    }
+
+    .flow-card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .compare-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .compare-board,
+    .provider-board {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .board-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .board-title strong {
+      font-size: 14px;
+    }
+
+    .board-title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .metric-table th,
+    .metric-table td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric-table th {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      background: rgba(245, 242, 234, 0.035);
+    }
+
+    .metric-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .ok {
+      color: #c9f9bb;
+    }
+
+    .warn {
+      color: #ffd893;
+    }
+
+    .provider-stack {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .provider-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: center;
+      background: rgba(245, 242, 234, 0.035);
+    }
+
+    .provider-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #111214;
+      font-weight: 800;
+      background: var(--accent, var(--cyan));
+    }
+
+    .provider-item strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .provider-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .terminal {
+      margin-top: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0d0e10;
+    }
+
+    .terminal-head {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      background: #17191c;
+    }
+
+    .terminal pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      color: #d7f9ef;
+      font-size: 12px;
+      line-height: 1.65;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .ai-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: 16px;
+    }
+
+    .script-list {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel);
+      display: grid;
+      gap: 10px;
+    }
+
+    .script-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(245, 242, 234, 0.035);
+    }
+
+    .script-row strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .script-row span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+
+    .script-row code {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 7px;
+      color: var(--cyan);
+      background: rgba(54, 212, 189, 0.06);
+      font-size: 11px;
+    }
+
+    .analysis-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .analysis-body {
+      padding: 18px;
+    }
+
+    .analysis-body h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .analysis-body p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .quote {
+      border-left: 3px solid var(--amber);
+      padding: 12px 14px;
+      background: rgba(244, 180, 77, 0.08);
+      color: #f9e0ab;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .proof-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .proof {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--panel);
+    }
+
+    .proof strong {
+      display: block;
+      font-size: 22px;
+    }
+
+    .proof span {
+      display: block;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .footer {
+      border-top: 1px solid var(--line);
+      padding: 34px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .footer .shell {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.55s ease, transform 0.55s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: none;
+    }
+
+    @media (max-width: 1080px) {
+      .hero,
+      .section-head,
+      .delta-grid,
+      .compare-layout,
+      .ai-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        min-height: auto;
+      }
+
+      h1 {
+        font-size: 56px;
+      }
+
+      .workbench {
+        min-height: auto;
+      }
+
+      .workbench-body {
+        grid-template-columns: 50px 1fr;
+      }
+
+      .side-panel {
+        grid-column: 1 / -1;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .feature-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .proof-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 26px, 1180px);
+      }
+
+      .nav-inner {
+        height: auto;
+        padding: 12px 0;
+        align-items: flex-start;
+      }
+
+      .brand-subtitle,
+      .nav-links {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 38px;
+      }
+
+      h1 {
+        font-size: 42px;
+        line-height: 1.02;
+      }
+
+      h2 {
+        font-size: 32px;
+        line-height: 1.08;
+      }
+
+      .hero-stats,
+      .feature-grid,
+      .flow,
+      .proof-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .workbench-body {
+        grid-template-columns: 1fr;
+      }
+
+      .rail {
+        display: none;
+      }
+
+      .graph-stage {
+        padding: 18px;
+      }
+
+      .graph-svg {
+        height: 300px;
+      }
+
+      .tools-pop {
+        position: relative;
+        left: auto;
+        right: auto;
+        bottom: auto;
+        margin-top: 14px;
+      }
+
+      .tools-grid {
+        grid-template-columns: 1fr;
+      }
+
+      section {
+        padding: 58px 0;
+      }
+
+      .provider-item,
+      .script-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="shell nav-inner">
+      <a class="brand" href="#top" aria-label="Netron VSCode Workbench">
+        <img class="brand-mark" src="../netron/source/icon.png" alt="">
+        <span>
+          <span class="brand-title">Netron VSCode Workbench</span>
+          <span class="brand-subtitle">VS Code 中的模型分析工作台</span>
+        </span>
+      </a>
+      <div class="nav-links" aria-label="页面导航">
+        <a href="#enhancements">增强点</a>
+        <a href="#workflow">工作流</a>
+        <a href="#compare">比较</a>
+        <a href="#ai">AI</a>
+        <a href="#extensions">扩展</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top">
+    <header class="shell hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span>基于 Netron 的 VS Code 增强工作台</div>
+        <h1>把模型预览推进到可裁剪、可运行、可比较、可分析。</h1>
+        <p class="lead">
+          原版 Netron 擅长打开和阅读模型结构；这个项目把它延展成面向调试和验证的工程工作台：
+          在 VS Code 内完成子图裁剪、结构化文本导出、推理执行、跨格式比较，以及由脚本驱动的 AI 分析。
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#enhancements">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+            查看增强点
+          </a>
+          <a class="button" href="private-ir-integration-guide.md">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5V5a2 2 0 0 1 2-2h11v18H6a2 2 0 0 1-2-1.5Z"/><path d="M8 7h5"/><path d="M8 11h6"/></svg>
+            私有 IR 接入指南
+          </a>
+        </div>
+        <div class="hero-stats">
+          <div class="stat"><strong>Host-managed</strong><span>ONNX 加载、裁剪、导出、推理由扩展宿主负责。</span></div>
+          <div class="stat"><strong>Provider API</strong><span>内置 ONNX / Dev IR，并可扩展私有格式。</span></div>
+          <div class="stat"><strong>AI Pipeline</strong><span>Exporter → Analyzer 脚本链路接入模型分析。</span></div>
+        </div>
+      </div>
+
+      <div class="workbench reveal" aria-label="工作台界面示意">
+        <div class="workbench-top">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="crumb">model-a.netronir.json</div>
+          <div class="crumb">Compare Center</div>
+        </div>
+        <div class="workbench-body">
+          <aside class="rail">
+            <div class="rail-item active" title="Model Tools">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg>
+            </div>
+            <div class="rail-item" title="Compare">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v16"/><path d="M17 4v16"/><path d="M7 8h10"/><path d="M7 16h10"/></svg>
+            </div>
+            <div class="rail-item" title="AI">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/><circle cx="12" cy="12" r="5"/></svg>
+            </div>
+          </aside>
+
+          <div class="graph-stage">
+            <svg class="graph-svg" viewBox="0 0 650 360" role="img" aria-label="Netron 图结构与裁剪路径示意">
+              <defs>
+                <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="rgba(245,242,234,0.55)"></path>
+                </marker>
+                <marker id="arrowHot" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#36d4bd"></path>
+                </marker>
+              </defs>
+              <path class="edge hot" marker-end="url(#arrowHot)" d="M90 168 C140 168 150 118 198 118"></path>
+              <path class="edge hot" marker-end="url(#arrowHot)" d="M306 118 C354 118 364 165 412 165"></path>
+              <path class="edge" marker-end="url(#arrow)" d="M306 118 C350 118 363 74 408 74"></path>
+              <path class="edge" marker-end="url(#arrow)" d="M520 74 C560 74 573 165 608 165"></path>
+              <path class="edge hot" marker-end="url(#arrowHot)" d="M520 165 C556 165 574 238 610 238"></path>
+              <g>
+                <rect class="tensor" x="24" y="145" width="72" height="46" rx="8"></rect>
+                <text class="tensor-text" x="60" y="172" text-anchor="middle">image_a</text>
+              </g>
+              <g class="node">
+                <rect x="198" y="86" width="108" height="64" fill="#335588" stroke="#7ba7e8"></rect>
+                <text x="252" y="123" text-anchor="middle">Conv</text>
+              </g>
+              <g class="node">
+                <rect x="412" y="43" width="108" height="62" fill="#59423b" stroke="#c49a8b"></rect>
+                <text x="466" y="79" text-anchor="middle">Shape</text>
+              </g>
+              <g class="node">
+                <rect x="412" y="133" width="108" height="64" fill="#702921" stroke="#d98d83"></rect>
+                <text x="466" y="170" text-anchor="middle">Relu</text>
+              </g>
+              <g>
+                <rect class="tensor" x="590" y="142" width="76" height="46" rx="8"></rect>
+                <text class="tensor-text" x="628" y="170" text-anchor="middle">hidden</text>
+              </g>
+              <g>
+                <rect class="tensor" x="590" y="215" width="76" height="46" rx="8"></rect>
+                <text class="tensor-text" x="628" y="243" text-anchor="middle">logits</text>
+              </g>
+              <g>
+                <rect class="tensor" x="184" y="204" width="136" height="42" rx="8"></rect>
+                <text class="tensor-text" x="252" y="230" text-anchor="middle">a_weight · initializer</text>
+              </g>
+            </svg>
+
+            <div class="tools-pop">
+              <div class="tools-tabs">
+                <span class="active">Crop</span>
+                <span>Run</span>
+                <span>Compare</span>
+                <span>AI</span>
+                <span>Activity</span>
+              </div>
+              <div class="tools-grid">
+                <div class="mini-panel">
+                  <div class="mini-label">Confirmed Crop</div>
+                  <div class="chips"><span class="chip">image_a</span><span class="chip">a_hidden</span><span class="chip">1 node</span></div>
+                </div>
+                <div class="mini-panel">
+                  <div class="mini-label">Text Export</div>
+                  <div class="chips"><span class="chip">graph-edge-list</span><span class="chip">copy</span><span class="chip">ready</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="side-panel">
+            <div class="side-header">
+              <h2>Netron Compare</h2>
+              <p>两个 confirmed crop 通过 I/O contract 绑定，不要求内部拓扑一致。</p>
+            </div>
+            <div class="run-list">
+              <div class="run-card"><strong>Slot A <span class="status-pill">Dev IR</span></strong><span>image_a → a_hidden · provider: dev-ir-a</span></div>
+              <div class="run-card"><strong>Slot B <span class="status-pill">ONNX</span></strong><span>image_a → a_hidden · provider: onnx</span></div>
+              <div class="run-card"><strong>Latest Result <span class="status-pill">ok</span></strong><span>maxAbs / meanAbs / RMSE / cosine similarity</span></div>
+            </div>
+            <div class="side-footer">Compare、AI Analysis 与 Model Tools 共享任务状态，运行中会显示 spinner 与可用性原因。</div>
+          </aside>
+        </div>
+      </div>
+    </header>
+
+    <section class="delta-strip" aria-label="与原版 Netron 的差异">
+      <div class="shell delta-grid">
+        <div class="delta-card reveal">
+          <h2>原版 Netron 的强项</h2>
+          <ul>
+            <li>它让你快速看清模型长什么样：有哪些节点、张量怎么流、每个算子的属性是什么。</li>
+            <li>它很适合做第一次排查：模型能不能打开、结构是不是符合预期、某个节点在哪。</li>
+            <li>它提供了成熟的图渲染和格式解析基础，本项目的增强能力都建立在这套体验之上。</li>
+          </ul>
+        </div>
+        <div class="delta-card workbench-side reveal">
+          <h2>本项目新增的工作台能力</h2>
+          <ul>
+            <li>你不只是看模型，还可以从图里截出一段真正可运行的子图，并把它保存成稳定的 artifact。</li>
+            <li>你可以直接跑这段子图、导出它、复制结构化文本，或者拿它和另一个格式的子图做结果比较。</li>
+            <li>你可以把私有模型格式和自己的分析脚本接进来，让同一套界面服务于内部模型、内部 runtime 和内部 AI 工具。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="enhancements">
+      <div class="shell">
+        <div class="section-head reveal">
+          <div>
+            <div class="section-kicker">Beyond Original Netron</div>
+            <h2>原版 Netron 看模型；这个工作台让模型进入实验流程。</h2>
+          </div>
+          <p class="section-copy">
+            这里的重点不是把界面换个壳，而是把“看见问题”之后的动作接上：选一段图、确认边界、跑一下、导出来、和另一个结果对比，再把结构交给脚本或 AI 分析。
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature reveal" style="--accent: var(--cyan)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg></div>
+            <h3>VS Code 里的模型工作台</h3>
+            <p>模型不再需要离开工程目录单独打开。你可以在 VS Code 里从 Explorer 右键打开模型，和代码、配置、测试数据放在同一个工作上下文里。</p>
+            <ul><li>多个模型可以并排打开，方便对照不同版本、不同导出链路或不同格式。</li><li>模型页面里直接集成 Model Tools，常用动作不需要跳到命令行。</li><li>底部 Compare 和 AI 面板跟随当前模型状态，适合持续调试。</li></ul>
+          </article>
+
+          <article class="feature reveal" style="--accent: var(--amber)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 17h16"/><path d="M7 4v16"/><path d="M17 4v16"/></svg></div>
+            <h3>Host-managed ONNX</h3>
+            <p>原版 Netron 更偏向前端查看。本项目把 ONNX 的重活放到 VS Code extension host：解析、裁剪、导出、推理都在宿主侧完成，webview 只负责展示。</p>
+            <ul><li>大模型和 external data 不需要整包塞进前端页面。</li><li>裁剪后的子图可以导出成真正的 ONNX artifact，而不是一段截图或说明。</li><li>推理走 ONNX Runtime，适合验证裁剪结果是否还能独立运行。</li></ul>
+          </article>
+
+          <article class="feature reveal" style="--accent: var(--rose)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 4 16 16"/><path d="M4 20 20 4"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="17" r="2"/></svg></div>
+            <h3>可确认的 Crop Artifact</h3>
+            <p>用户在图上点 tensor 边来选择 start 和 end，确认后系统生成一个明确的 crop artifact。之后所有操作都围绕这个 artifact，而不是临时选择状态。</p>
+            <ul><li>保留 draft、confirmed、stale 状态，避免“我刚才选的是哪段图”这种不确定性。</li><li>provider 负责真正截出可推理子图，UI 负责把边界和状态讲清楚。</li><li>同一个 artifact 可以继续用于导出、推理、比较和 AI 分析。</li></ul>
+          </article>
+
+          <article class="feature reveal" style="--accent: var(--green)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7Z"/><path d="M4 5v14"/></svg></div>
+            <h3>推理与输入导入</h3>
+            <p>截完子图之后，可以马上跑一次，确认它不是“看起来被截出来了”，而是真的能独立接受输入、产出输出。</p>
+            <ul><li>没有测试输入时，可以用 zeros、ones、random 快速生成输入。</li><li>需要复现真实问题时，可以导入 JSON 或 NPZ 输入数据。</li><li>运行结果会展示 shape、dtype、统计信息和 sample，便于快速判断异常。</li></ul>
+          </article>
+
+          <article class="feature reveal" style="--accent: var(--violet)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v16"/><path d="M17 4v16"/><path d="M7 8h10"/><path d="M7 16h10"/></svg></div>
+            <h3>Compare Center</h3>
+            <p>很多时候你关心的不是两张图是否长得一样，而是同一段语义在两个格式、两个 provider 或两个版本里跑出来是否一致。</p>
+            <ul><li>把两个 confirmed crop 放进 A/B slot，系统按输入输出契约尝试绑定。</li><li>内部拓扑可以不同，只要 I/O dtype、rank、shape 兼容就能比较。</li><li>输出 max abs、mean abs、RMSE、relative diff、cosine similarity 等指标。</li></ul>
+          </article>
+
+          <article class="feature reveal" style="--accent: var(--steel)">
+            <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/><circle cx="12" cy="12" r="5"/></svg></div>
+            <h3>脚本化 AI 分析</h3>
+            <p>AI 面板不绑定某一个模型服务，也不是一个通用聊天框。它先让 exporter 把 crop 转成文本，再交给 analyzer 脚本决定怎么分析。</p>
+            <ul><li>exporter 可以输出 edge list、JSON summary 或客户自定义文本格式。</li><li>analyzer 可以调用私有模型、DeepSeek、内部 agent CLI，或任何一次性 message 模式工具。</li><li>工具从全局目录热加载，UI 会展示是否可用以及不可用原因。</li></ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow">
+      <div class="shell">
+        <div class="section-head reveal">
+          <div>
+            <div class="section-kicker">Workflow</div>
+            <h2>围绕 confirmed crop 的一条主线。</h2>
+          </div>
+          <p class="section-copy">所有高级功能都围绕同一个对象展开：用户确认过的 crop artifact。它让导出、推理、比较和 AI 分析拥有一致的目标和 provenance。</p>
+        </div>
+        <div class="flow">
+          <div class="flow-card reveal"><h3>Open</h3><p>在 VS Code 中打开 ONNX、Dev IR 或私有 provider 支持的模型。</p></div>
+          <div class="flow-card reveal"><h3>Select</h3><p>在 Netron 图上点击 tensor 边，选择 start 和 end 边界。</p></div>
+          <div class="flow-card reveal"><h3>Confirm</h3><p>生成 confirmed crop artifact，得到稳定的子图目标。</p></div>
+          <div class="flow-card reveal"><h3>Run / Export</h3><p>运行推理、导出模型 artifact、复制结构化文本。</p></div>
+          <div class="flow-card reveal"><h3>Compare / Analyze</h3><p>把子图放入 Compare Center，或交给 AI 面板分析。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="compare">
+      <div class="shell">
+        <div class="section-head reveal">
+          <div>
+            <div class="section-kicker">Cross Format Compare</div>
+            <h2>比较的是契约和结果，不是图长得像不像。</h2>
+          </div>
+          <p class="section-copy">这让 ONNX、Dev IR、私有 IR 的子图可以在同一 Compare Center 中对齐。只要输入输出 dtype、rank、shape 兼容，就能运行比较。</p>
+        </div>
+
+        <div class="compare-layout">
+          <div class="compare-board reveal">
+            <div class="board-title"><strong>Compare Result</strong><span>latest run</span></div>
+            <table class="metric-table">
+              <thead><tr><th>Output</th><th>Status</th><th>maxAbs</th><th>cosine</th></tr></thead>
+              <tbody>
+                <tr><td><code>a_hidden ↔ a_hidden</code></td><td class="ok">ok</td><td>0.710375</td><td>0.9341</td></tr>
+                <tr><td><code>logits_a ↔ scores_b</code></td><td class="ok">ok</td><td>0.949738</td><td>0.8816</td></tr>
+                <tr><td><code>mask ↔ mask_b</code></td><td class="warn">manual bind</td><td>shape-check</td><td>pending</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="provider-board reveal">
+            <div class="board-title"><strong>Provider Boundary</strong><span>host-owned state</span></div>
+            <div class="provider-stack">
+              <div class="provider-item" style="--accent: var(--cyan)"><div class="provider-badge">O</div><div><strong>ONNX Provider</strong><span>真实 ONNX crop、export、runtime inference</span></div><span class="status-pill">built-in</span></div>
+              <div class="provider-item" style="--accent: var(--amber)"><div class="provider-badge">D</div><div><strong>Dev IR Provider</strong><span>轻量 fake runtime，用于跨格式链路验证</span></div><span class="status-pill">test</span></div>
+              <div class="provider-item" style="--accent: var(--rose)"><div class="provider-badge">P</div><div><strong>Private IR Provider</strong><span>通过内部接口接入私有格式和运行时</span></div><span class="status-pill">extensible</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="terminal reveal">
+          <div class="terminal-head">smoke evidence</div>
+          <pre>npm run smoke:all
+provider artifact export ok
+private provider contract ok
+dev ir provider ok { providers: 'dev-ir-a,dev-ir-b', maxAbs: 0.710375 }
+smoke all ok</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="ai">
+      <div class="shell">
+        <div class="section-head reveal">
+          <div>
+            <div class="section-kicker">Exporter → Analyzer</div>
+            <h2>AI 面板不是聊天框，而是可替换的分析管线。</h2>
+          </div>
+          <p class="section-copy">用户在 Model Tools 里选择 formatter/exporter 和 analyzer。点击 Analyze 后，系统自动完成 export → analyze，并把结果展示在 AI Analysis 面板。</p>
+        </div>
+
+        <div class="ai-panel">
+          <div class="script-list reveal">
+            <div class="script-row"><div><strong>crop-json-summary</strong><span>输出模型、artifact、输入输出、节点和 tensor 数量。</span></div><code>exporter</code></div>
+            <div class="script-row"><div><strong>graph-edge-list</strong><span>把 crop graph 转成边列表文本，适合给 LLM 或 agent。</span></div><code>exporter</code></div>
+            <div class="script-row"><div><strong>line-count-analysis</strong><span>最小 analyzer 示例，用于验证管线。</span></div><code>analyzer</code></div>
+            <div class="script-row"><div><strong>deepseek-graph-analysis</strong><span>脱敏示例，通过环境变量或 secret file 读取 key。</span></div><code>analyzer</code></div>
+            <div class="script-row"><div><strong>codex-one-shot-analysis</strong><span>包装 codex exec，一次性读取 graph text 并返回分析结果。</span></div><code>analyzer</code></div>
+          </div>
+
+          <div class="analysis-card reveal">
+            <div class="board-title"><strong>AI Analysis</strong><span>display-only panel</span></div>
+            <div class="analysis-body">
+              <h3>由客户脚本决定上下文和分析逻辑。</h3>
+              <p>核心只负责把 confirmed crop 的结构化文本交给脚本，运行状态、取消、错误原因和结果展示由扩展统一管理。</p>
+              <div class="quote">输入是 Netron crop 图的 edge-list 文本。请分析主干路径、分支/汇合、输入输出、可疑断点、可并行区域，以及后续推理/裁剪/比较建议。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="extensions">
+      <div class="shell">
+        <div class="section-head reveal">
+          <div>
+            <div class="section-kicker">Private IR Ready</div>
+            <h2>弱模型也能照着接入的私有 IR 开发路径。</h2>
+          </div>
+          <p class="section-copy">接入指南现在按“照抄能跑”的方式组织：每一步给模板代码，覆盖 provider、JS 解析、Python 桥接、exporter/analyzer、环境变量、依赖引用和错误定位。</p>
+        </div>
+
+        <div class="proof-grid">
+          <div class="proof reveal"><strong>Step-by-step</strong><span>从最小可打开 provider 开始，逐步加 crop、text export、AI、export、inference、compare。</span></div>
+          <div class="proof reveal"><strong>JS + Python</strong><span>既给纯 JavaScript parser 模板，也给 Python parser/runtime 由 JS 调用的桥接模板。</span></div>
+          <div class="proof reveal"><strong>Dependencies</strong><span>说明 provider 和用户脚本如何引用 npm、venv、conda、CUDA/vendor library、Remote SSH 依赖。</span></div>
+          <div class="proof reveal"><strong>Debug Map</strong><span>按症状定位该查 provider、exporter、analyzer、runtime、extension host 还是 UI 状态。</span></div>
+        </div>
+
+        <div class="terminal reveal">
+          <div class="terminal-head">private IR checklist</div>
+          <pre>1. copy provider template and register createMyIrProvider()
+2. choose JS parser or Python bridge parser
+3. verify snapshot nodes, categories, tensors and initializers
+4. implement real crop artifact and text export context
+5. wire exporter/analyzer scripts with env and dependency wrappers
+6. debug with the symptom table, then run compare across providers</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <span>Netron VSCode Workbench · model preview, crop, inference, compare, exporter/analyzer and private IR integration.</span>
+      <span>Static showcase · no external assets or network calls.</span>
+    </div>
+  </footer>
+
+  <script>
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      }
+    }, { threshold: 0.12 });
+
+    for (const element of document.querySelectorAll('.reveal')) {
+      observer.observe(element);
+    }
+  </script>
+</body>
+</html>

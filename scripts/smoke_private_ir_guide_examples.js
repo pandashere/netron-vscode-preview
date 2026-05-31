@@ -104,6 +104,7 @@ async function main() {
         assert(exporterSnapshot.entries.some((entry) => entry.id === 'graph-edge-list' && entry.status === 'ready'), 'Graph edge-list exporter should be ready.');
         assert(analyzerSnapshot.entries.some((entry) => entry.id === 'line-count-analysis' && entry.status === 'ready'), 'Line count analyzer should be ready.');
         assert(analyzerSnapshot.entries.some((entry) => entry.id === 'deepseek-graph-analysis' && entry.status === 'ready'), 'DeepSeek analyzer manifest should be ready.');
+        assert(analyzerSnapshot.entries.some((entry) => entry.id === 'codex-one-shot-analysis' && entry.status === 'ready'), 'Codex one-shot analyzer manifest should be ready.');
 
         const contextText = JSON.stringify(context, null, 2);
         const summary = runNodeEntryWithFiles(exporters.getEntry('crop-json-summary'), contextText);
@@ -129,6 +130,35 @@ async function main() {
         });
         assert(missingKey.status !== 0, 'DeepSeek example should fail without a key.');
         assert(/DEEPSEEK_API_KEY/.test(missingKey.stderr), 'DeepSeek example should fail clearly when no key is configured.');
+
+        const fakeCodex = path.join(tempRoot, 'fake-codex.js');
+        fs.writeFileSync(fakeCodex, `#!/usr/bin/env node
+const fs = require('fs');
+let output = '';
+for (let index = 2; index < process.argv.length; index++) {
+  if (process.argv[index] === '--output-last-message') {
+    output = process.argv[index + 1] || '';
+  }
+}
+let prompt = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => prompt += chunk);
+process.stdin.on('end', () => {
+  if (!output) {
+    console.error('missing output path');
+    process.exit(2);
+  }
+  fs.writeFileSync(output, 'Codex fake analysis\\nPrompt bytes: ' + Buffer.byteLength(prompt));
+});
+`);
+        fs.chmodSync(fakeCodex, 0o755);
+        const codex = runNodeEntryWithFiles(analyzers.getEntry('codex-one-shot-analysis'), edgeList.stdout, {
+            env: {
+                CODEX_COMMAND: fakeCodex
+            }
+        });
+        assert(codex.status === 0, `Codex one-shot analyzer wrapper failed: ${codex.stderr}`);
+        assert(codex.stdout.includes('Codex fake analysis'), 'Codex one-shot analyzer should return final Codex output.');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

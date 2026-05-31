@@ -1,0 +1,11 @@
+{
+  "id": "codex-one-shot-analysis",
+  "label": "Codex One-Shot Analysis",
+  "command": "node",
+  "args": ["codex-one-shot-analysis.js"],
+  "timeoutMs": 300000,
+  "env": {
+    "CODEX_COMMAND": "/home/zhaochen/.npm-global/bin/codex",
+    "CODEX_MODEL": ""
+  }
+}
