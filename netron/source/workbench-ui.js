@@ -12,6 +12,13 @@ const toText = (value) => {
     }
 };
 
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 class TensorShape {
     constructor(dimensions) {
         this.dimensions = Array.isArray(dimensions) ? dimensions.slice() : [];
@@ -194,10 +201,18 @@ export class ONNXWorkbenchUI {
         this.endKeys = new Set();
         this.graphIndex = null;
         this.currentSessionId = null;
+        this.providerInfo = null;
         this.fullModelSnapshot = null;
         this.confirmedArtifact = null;
         this.importedInput = null;
         this.compareState = null;
+        this.toolState = { exporters: { entries: [] }, analyzers: { entries: [] }, task: null };
+        this.selectedExporterId = null;
+        this.selectedFormatterId = null;
+        this.selectedAnalyzerId = null;
+        this.exporterDetailsOpen = false;
+        this.formatterDetailsOpen = false;
+        this.analyzerDetailsOpen = false;
         this.taskState = null;
         this.activity = [];
         this.draftDirty = false;
@@ -219,7 +234,7 @@ export class ONNXWorkbenchUI {
         this._createDrawer();
         this._bindEvents();
         this._syncWorkbenchLayout();
-        this._setStatus('Load an ONNX model to use Model Tools.');
+        this._setStatus('Load a supported model to use Model Tools.');
     }
 
     _injectStyle() {
@@ -265,10 +280,20 @@ export class ONNXWorkbenchUI {
         #onnx-workbench .wb-status { padding: 10px 12px; border-top: 1px solid rgba(127,127,127,0.2); background: rgba(255,255,255,0.7); font-size: 12px; }
         #onnx-workbench .wb-status.error { color: #c62828; }
         #onnx-workbench .wb-task { border: 1px solid rgba(127,127,127,0.18); background: rgba(31,111,235,0.06); border-radius: 10px; padding: 8px; margin-bottom: 12px; }
+        #onnx-workbench .wb-task-title { display: inline-flex; align-items: center; gap: 6px; }
         #onnx-workbench .wb-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
         #onnx-workbench textarea { width: 100%; min-height: 66px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.25); background: rgba(255,255,255,0.9); color: inherit; padding: 8px; box-sizing: border-box; }
         #onnx-workbench .wb-result-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         #onnx-workbench .wb-result-table th, #onnx-workbench .wb-result-table td { border-top: 1px solid rgba(127,127,127,0.18); padding: 6px; text-align: left; vertical-align: top; }
+        #onnx-workbench .wb-detail-toggle { width: 24px; min-width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-color: transparent; background: transparent; border-radius: 6px; color: inherit; opacity: 0.38; font-size: 13px; line-height: 1; }
+        #onnx-workbench .wb-detail-toggle[disabled] { opacity: 0.26; cursor: default; }
+        #onnx-workbench .wb-detail-toggle.has-error { opacity: 0.7; color: #b26a00; }
+        #onnx-workbench .wb-detail-toggle.has-error:hover { opacity: 1; background: rgba(178,106,0,0.08); }
+        #onnx-workbench .wb-detail-toggle.expanded { opacity: 1; background: rgba(178,106,0,0.10); }
+        #onnx-workbench .wb-spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; vertical-align: -2px; animation: wb-spin 0.8s linear infinite; flex: 0 0 auto; }
+        #onnx-workbench button .wb-spinner { margin-right: 6px; }
+        #onnx-workbench .wb-status-line { display: inline-flex; align-items: center; gap: 6px; }
+        @keyframes wb-spin { to { transform: rotate(360deg); } }
         .edge-path.workbench-edge-start { stroke: #2f80ed !important; stroke-width: 1.8px !important; }
         .edge-path.workbench-edge-end { stroke: #eb6f2d !important; stroke-width: 1.8px !important; }
         @media (prefers-color-scheme: dark) {
@@ -347,6 +372,7 @@ export class ONNXWorkbenchUI {
                 <button class="wb-tab active" data-tab="crop">Crop</button>
                 <button class="wb-tab" data-tab="run">Run</button>
                 <button class="wb-tab" data-tab="compare">Compare</button>
+                <button class="wb-tab" data-tab="ai">AI</button>
                 <button class="wb-tab" data-tab="activity">Activity</button>
             </div>
             <div class="wb-panel active" data-panel="crop">
@@ -374,8 +400,18 @@ export class ONNXWorkbenchUI {
                 </div>
                 <div class="wb-row">
                     <button id="wb-confirm-crop" class="primary">Confirm Crop</button>
-                    <button id="wb-export-crop" disabled>Export Crop ONNX</button>
+                    <button id="wb-export-crop" disabled>Export Crop Artifact</button>
                     <button id="wb-save-crop-png">Save Crop PNG</button>
+                </div>
+                <div class="wb-section">
+                    <div class="wb-section-title">Text Export</div>
+                    <div class="wb-row">
+                        <select id="wb-text-exporter"></select>
+                        <button id="wb-exporter-details" class="wb-detail-toggle" title="No current item error details" aria-label="Exporter error details">ⓘ</button>
+                        <button id="wb-copy-export-text" disabled>Copy Export Text</button>
+                    </div>
+                    <div id="wb-exporter-reason" class="wb-muted"></div>
+                    <div id="wb-exporter-details-panel" class="wb-muted" style="display:none;"></div>
                 </div>
             </div>
             <div class="wb-panel" data-panel="run">
@@ -421,6 +457,38 @@ export class ONNXWorkbenchUI {
                     <button id="wb-open-compare">Focus Compare</button>
                 </div>
             </div>
+            <div class="wb-panel" data-panel="ai">
+                <div id="wb-task-ai"></div>
+                <div class="wb-section">
+                    <div class="wb-section-title">Target</div>
+                    <div id="wb-ai-target" class="wb-muted">(no confirmed crop)</div>
+                </div>
+                <div class="wb-section">
+                    <div class="wb-section-title">Pipeline</div>
+                    <div class="wb-row">
+                        <label>Formatter</label>
+                        <select id="wb-ai-formatter"></select>
+                        <button id="wb-formatter-details" class="wb-detail-toggle" title="No current item error details" aria-label="Formatter error details">ⓘ</button>
+                    </div>
+                    <div id="wb-formatter-reason" class="wb-muted"></div>
+                    <div id="wb-formatter-details-panel" class="wb-muted" style="display:none;"></div>
+                    <div class="wb-row" style="margin-top:8px;">
+                        <label>Analyzer</label>
+                        <select id="wb-ai-analyzer"></select>
+                        <button id="wb-analyzer-details" class="wb-detail-toggle" title="No current item error details" aria-label="Analyzer error details">ⓘ</button>
+                    </div>
+                    <div id="wb-analyzer-reason" class="wb-muted"></div>
+                    <div id="wb-analyzer-details-panel" class="wb-muted" style="display:none;"></div>
+                </div>
+                <div class="wb-row">
+                    <button id="wb-run-ai" class="primary" disabled>Analyze</button>
+                    <button id="wb-cancel-ai" disabled>Cancel</button>
+                </div>
+                <div class="wb-section">
+                    <div class="wb-section-title">Status</div>
+                    <div id="wb-ai-status" class="wb-muted">Ready.</div>
+                </div>
+            </div>
             <div class="wb-panel" data-panel="activity">
                 <div class="wb-section">
                     <div class="wb-section-title">Recent Activity</div>
@@ -445,6 +513,11 @@ export class ONNXWorkbenchUI {
         this._elements.confirmCrop = root.querySelector('#wb-confirm-crop');
         this._elements.exportCrop = root.querySelector('#wb-export-crop');
         this._elements.saveCropPng = root.querySelector('#wb-save-crop-png');
+        this._elements.textExporter = root.querySelector('#wb-text-exporter');
+        this._elements.exporterDetails = root.querySelector('#wb-exporter-details');
+        this._elements.copyExportText = root.querySelector('#wb-copy-export-text');
+        this._elements.exporterReason = root.querySelector('#wb-exporter-reason');
+        this._elements.exporterDetailsPanel = root.querySelector('#wb-exporter-details-panel');
         this._elements.artifactSummary = root.querySelector('#wb-artifact-summary');
         this._elements.useFullGraph = root.querySelector('#wb-use-full-graph');
         this._elements.inputMode = root.querySelector('#wb-input-mode');
@@ -457,11 +530,24 @@ export class ONNXWorkbenchUI {
         this._elements.assignB = root.querySelector('#wb-assign-b');
         this._elements.compareSummary = root.querySelector('#wb-compare-summary');
         this._elements.openCompare = root.querySelector('#wb-open-compare');
+        this._elements.aiTarget = root.querySelector('#wb-ai-target');
+        this._elements.aiFormatter = root.querySelector('#wb-ai-formatter');
+        this._elements.formatterDetails = root.querySelector('#wb-formatter-details');
+        this._elements.formatterReason = root.querySelector('#wb-formatter-reason');
+        this._elements.formatterDetailsPanel = root.querySelector('#wb-formatter-details-panel');
+        this._elements.aiAnalyzer = root.querySelector('#wb-ai-analyzer');
+        this._elements.analyzerDetails = root.querySelector('#wb-analyzer-details');
+        this._elements.analyzerReason = root.querySelector('#wb-analyzer-reason');
+        this._elements.analyzerDetailsPanel = root.querySelector('#wb-analyzer-details-panel');
+        this._elements.runAi = root.querySelector('#wb-run-ai');
+        this._elements.cancelAi = root.querySelector('#wb-cancel-ai');
+        this._elements.aiStatus = root.querySelector('#wb-ai-status');
         this._elements.activityList = root.querySelector('#wb-activity-list');
         this._elements.status = root.querySelector('#wb-status');
         this._elements.taskCrop = root.querySelector('#wb-task-crop');
         this._elements.taskRun = root.querySelector('#wb-task-run');
         this._elements.taskCompare = root.querySelector('#wb-task-compare');
+        this._elements.taskAi = root.querySelector('#wb-task-ai');
     }
 
     _scheduleRefit(force = false) {
@@ -686,6 +772,26 @@ export class ONNXWorkbenchUI {
                 this._setStatus(error.message || String(error), true);
             }
         });
+        this._elements.textExporter.addEventListener('change', () => {
+            this.selectedExporterId = this._elements.textExporter.value || null;
+            this.exporterDetailsOpen = false;
+            this.host._post({ type: 'selectExporter', id: this.selectedExporterId });
+            this._renderToolControls();
+        });
+        this._elements.exporterDetails.addEventListener('click', () => {
+            this.exporterDetailsOpen = !this.exporterDetailsOpen;
+            this._renderToolControls();
+        });
+        this._elements.copyExportText.addEventListener('click', () => {
+            if (!this.confirmedArtifact || this.draftDirty) {
+                return;
+            }
+            this.host._post({
+                type: 'copyExportText',
+                artifactId: this.confirmedArtifact.id,
+                exporterId: this._elements.textExporter.value || null
+            });
+        });
         this._elements.importInput.addEventListener('click', () => {
             this.host._post({ type: 'importInputFile' });
         });
@@ -718,6 +824,40 @@ export class ONNXWorkbenchUI {
         this._elements.openCompare.addEventListener('click', () => {
             this.host._post({ type: 'requestOpenCompareCenter' });
         });
+        this._elements.aiFormatter.addEventListener('change', () => {
+            this.selectedFormatterId = this._elements.aiFormatter.value || null;
+            this.formatterDetailsOpen = false;
+            this.host._post({ type: 'selectFormatter', id: this.selectedFormatterId });
+            this._renderToolControls();
+        });
+        this._elements.formatterDetails.addEventListener('click', () => {
+            this.formatterDetailsOpen = !this.formatterDetailsOpen;
+            this._renderToolControls();
+        });
+        this._elements.aiAnalyzer.addEventListener('change', () => {
+            this.selectedAnalyzerId = this._elements.aiAnalyzer.value || null;
+            this.analyzerDetailsOpen = false;
+            this.host._post({ type: 'selectAnalyzer', id: this.selectedAnalyzerId });
+            this._renderToolControls();
+        });
+        this._elements.analyzerDetails.addEventListener('click', () => {
+            this.analyzerDetailsOpen = !this.analyzerDetailsOpen;
+            this._renderToolControls();
+        });
+        this._elements.runAi.addEventListener('click', () => {
+            if (!this.confirmedArtifact || this.draftDirty) {
+                return;
+            }
+            this.host._post({
+                type: 'runAiAnalysis',
+                artifactId: this.confirmedArtifact.id,
+                exporterId: this._elements.aiFormatter.value || null,
+                analyzerId: this._elements.aiAnalyzer.value || null
+            });
+        });
+        this._elements.cancelAi.addEventListener('click', () => {
+            this.host._post({ type: 'cancelAiTask' });
+        });
         this._elements.selectionBar.addEventListener('click', (event) => event.stopPropagation());
         this._elements.root.addEventListener('click', (event) => event.stopPropagation());
         this.host.document.addEventListener('click', (event) => this._handleGraphClick(event), true);
@@ -737,8 +877,9 @@ export class ONNXWorkbenchUI {
             this._resizeObserver = new this.host.window.ResizeObserver(() => this._scheduleRefit());
             this._resizeObserver.observe(targetContainer);
         }
-        this.host.window.addEventListener('nnjs:model-opened', () => {
+        this.host.window.addEventListener('nnjs:model-opened', (event) => {
             this.currentSessionId = null;
+            this.providerInfo = null;
             this.fullModelSnapshot = null;
             this.confirmedArtifact = null;
             this.importedInput = null;
@@ -750,7 +891,11 @@ export class ONNXWorkbenchUI {
             this._renderSelectionLists();
             this._renderArtifactSummary();
             this._updateButtons();
-            this._setStatus('Legacy model loaded. ONNX workbench actions are unavailable for this file.', false);
+            const reason = event && event.detail && typeof event.detail.providerUnavailableReason === 'string'
+                ? event.detail.providerUnavailableReason
+                : '';
+            const suffix = reason ? ` ${reason}` : '';
+            this._setStatus(`Legacy model loaded. Model Tools actions are unavailable for this file.${suffix}`, false);
         });
         this.host._post({ type: 'requestCompareState' });
     }
@@ -812,7 +957,7 @@ export class ONNXWorkbenchUI {
 
     _confirmCrop() {
         if (!this.currentSessionId) {
-            this._setStatus('Load an ONNX model before confirming crop.', true);
+            this._setStatus('Load a supported model before confirming crop.', true);
             return;
         }
         if (this.startKeys.size === 0 || this.endKeys.size === 0) {
@@ -862,7 +1007,7 @@ export class ONNXWorkbenchUI {
         }
         switch (message.type) {
             case 'renderGraphSnapshot':
-                await this._renderFullModel(message.model);
+                await this._renderFullModel(message.model, message);
                 break;
             case 'cropConfirmed':
                 await this._handleCropConfirmed(message);
@@ -883,6 +1028,11 @@ export class ONNXWorkbenchUI {
             case 'compareStateUpdate':
                 this.compareState = message.state;
                 this._renderCompareSummary();
+                break;
+            case 'toolStateUpdate':
+                this.toolState = message.state || this.toolState;
+                this._renderToolControls();
+                this._updateButtons();
                 break;
             case 'tensorPreviewResult': {
                 const pending = message.requestId ? this._tensorPreviewRequests.get(message.requestId) : null;
@@ -911,6 +1061,15 @@ export class ONNXWorkbenchUI {
             case 'clipboardCopied':
                 this._setStatus(`${message.label || 'Text'} copied to clipboard.`);
                 break;
+            case 'exportTextCopied':
+                this._setStatus('Export text copied to clipboard.');
+                break;
+            case 'exportTextError':
+                this._setStatus(message.message || 'Export text failed.', true);
+                break;
+            case 'aiAnalysisStatus':
+                this._renderAiStatus(message.status, message.message);
+                break;
             case 'clipboardError':
                 this._setStatus(message.message || 'Clipboard operation failed.', true);
                 break;
@@ -919,9 +1078,10 @@ export class ONNXWorkbenchUI {
         }
     }
 
-    async _renderFullModel(snapshot) {
+    async _renderFullModel(snapshot, message = {}) {
         this.fullModelSnapshot = snapshot;
         this.currentSessionId = snapshot.sessionId;
+        this.providerInfo = message.provider || snapshot.provider || { id: snapshot.format || 'unknown', label: snapshot.format || 'Model', capabilities: {} };
         this.confirmedArtifact = null;
         this.importedInput = null;
         this.draftDirty = false;
@@ -937,9 +1097,11 @@ export class ONNXWorkbenchUI {
         this._renderArtifactSummary();
         this._renderImportedInputPreview();
         this._renderRunResult(null);
+        this._renderToolControls();
         this._updateButtons();
         this._fitActiveGraph({ force: true });
-        this._setStatus('ONNX model loaded. Select crop boundaries and confirm when ready.');
+        const providerLabel = this.providerInfo && this.providerInfo.label ? this.providerInfo.label : 'Model';
+        this._setStatus(`${providerLabel} model loaded. Select crop boundaries and confirm when ready.`);
     }
 
     async _handleCropConfirmed(message) {
@@ -952,6 +1114,7 @@ export class ONNXWorkbenchUI {
         this._refreshGraphIndex();
         this._setMode(null);
         this._renderArtifactSummary();
+        this._renderToolControls();
         this._updateButtons();
         this._applyEdgeHighlights();
         this._fitActiveGraph({ force: true });
@@ -1271,16 +1434,171 @@ export class ONNXWorkbenchUI {
         this._elements.compareSummary.innerHTML = lines.map((line) => `<div>${line}</div>`).join('');
     }
 
+    _entries(kind) {
+        const registry = this.toolState && this.toolState[kind] ? this.toolState[kind] : null;
+        return registry && Array.isArray(registry.entries) ? registry.entries : [];
+    }
+
+    _resolveToolSelection(kind, selectedId) {
+        const entries = this._entries(kind);
+        if (selectedId) {
+            const existing = entries.find((entry) => entry.id === selectedId || entry.key === selectedId);
+            if (existing) {
+                return existing;
+            }
+        }
+        return entries.find((entry) => entry.status === 'ready') || entries[0] || null;
+    }
+
+    _renderToolSelect(select, entries, selectedEntry) {
+        while (select.firstChild) {
+            select.removeChild(select.firstChild);
+        }
+        if (entries.length === 0) {
+            const option = this.host.document.createElement('option');
+            option.value = '';
+            option.textContent = '(none)';
+            select.appendChild(option);
+            select.value = '';
+            return;
+        }
+        for (const entry of entries) {
+            const option = this.host.document.createElement('option');
+            option.value = entry.id || entry.key || '';
+            option.textContent = entry.status === 'ready' ? (entry.label || entry.id || '(unnamed)') : `Invalid: ${entry.label || entry.id || 'configuration'}`;
+            option.disabled = entry.status !== 'ready';
+            option.title = entry.reason || '';
+            select.appendChild(option);
+        }
+        if (selectedEntry) {
+            select.value = selectedEntry.id || selectedEntry.key || '';
+        }
+    }
+
+    _toolReason(entry, missingText) {
+        if (!entry) {
+            return missingText;
+        }
+        if (entry.status !== 'ready') {
+            return entry.reason || 'Selected item is unavailable.';
+        }
+        return 'Ready.';
+    }
+
+    _providerCapabilities() {
+        return this.providerInfo && this.providerInfo.capabilities ? this.providerInfo.capabilities : {};
+    }
+
+    _providerSupports(capability) {
+        return this._providerCapabilities()[capability] === true;
+    }
+
+    _providerLabel() {
+        return this.providerInfo && this.providerInfo.label ? this.providerInfo.label : 'Current provider';
+    }
+
+    _capabilityReason(capability, action) {
+        if (!this.currentSessionId) {
+            return 'No supported model is loaded.';
+        }
+        return this._providerSupports(capability) ? '' : `${this._providerLabel()} does not support ${action}.`;
+    }
+
+    _renderDetails(button, panel, entry, isOpen) {
+        const hasDetails = !!(entry && entry.status !== 'ready' && ((entry.reason && entry.reason.length > 0) || (entry.details && entry.details.length > 0)));
+        button.disabled = !hasDetails;
+        button.textContent = isOpen && hasDetails ? '▾' : 'ⓘ';
+        button.title = hasDetails
+            ? (isOpen ? 'Hide current item error details' : 'Show current item error details')
+            : 'No current item error details';
+        button.setAttribute('aria-label', button.title);
+        button.classList.toggle('has-error', hasDetails);
+        button.classList.toggle('expanded', hasDetails && isOpen);
+        if (!hasDetails || !isOpen) {
+            panel.style.display = 'none';
+            panel.textContent = '';
+            return;
+        }
+        panel.style.display = 'block';
+        const lines = [entry.reason || 'Unavailable'].concat(Array.isArray(entry.details) ? entry.details : []);
+        panel.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('');
+    }
+
+    _setButtonRunning(button, label, running) {
+        if (!button) {
+            return;
+        }
+        button.innerHTML = running
+            ? `<span class="wb-spinner" aria-hidden="true"></span>${escapeHtml(label)}`
+            : escapeHtml(label);
+        button.classList.toggle('running', !!running);
+    }
+
+    _renderStatusLine(element, message, running) {
+        if (!element) {
+            return;
+        }
+        element.innerHTML = running
+            ? `<span class="wb-status-line"><span class="wb-spinner" aria-hidden="true"></span><span>${escapeHtml(message)}</span></span>`
+            : escapeHtml(message);
+    }
+
+    _renderAiStatus(status, message) {
+        const task = this.toolState && this.toolState.task ? this.toolState.task : null;
+        if (task && task.kind === 'analysis') {
+            this._renderStatusLine(this._elements.aiStatus, task.message || 'Running analysis...', true);
+            return;
+        }
+        if (status) {
+            this._renderStatusLine(this._elements.aiStatus, message || status, false);
+            return;
+        }
+        this._renderStatusLine(this._elements.aiStatus, message || 'Ready.', false);
+    }
+
+    _renderToolControls() {
+        const exporters = this._entries('exporters');
+        const analyzers = this._entries('analyzers');
+        const exporter = this._resolveToolSelection('exporters', this.selectedExporterId);
+        const formatter = this._resolveToolSelection('exporters', this.selectedFormatterId);
+        const analyzer = this._resolveToolSelection('analyzers', this.selectedAnalyzerId);
+        this._renderToolSelect(this._elements.textExporter, exporters, exporter);
+        this._renderToolSelect(this._elements.aiFormatter, exporters, formatter);
+        this._renderToolSelect(this._elements.aiAnalyzer, analyzers, analyzer);
+        const task = this.toolState && this.toolState.task ? this.toolState.task : null;
+        const textExportReason = this._capabilityReason('textExportContext', 'text export');
+        const targetReason = !this.confirmedArtifact
+            ? 'No confirmed crop.'
+            : this.draftDirty
+                ? 'Current crop is stale. Confirm crop again.'
+                : '';
+        const taskReason = task ? (task.message || 'Another export/analysis task is running.') : '';
+        this._elements.exporterReason.textContent = textExportReason || targetReason || taskReason || this._toolReason(exporter, 'No exporters found.');
+        this._elements.formatterReason.textContent = textExportReason || targetReason || taskReason || this._toolReason(formatter, 'No exporters found.');
+        this._elements.analyzerReason.textContent = textExportReason || targetReason || taskReason || this._toolReason(analyzer, 'No analyzers found.');
+        this._renderDetails(this._elements.exporterDetails, this._elements.exporterDetailsPanel, exporter, this.exporterDetailsOpen);
+        this._renderDetails(this._elements.formatterDetails, this._elements.formatterDetailsPanel, formatter, this.formatterDetailsOpen);
+        this._renderDetails(this._elements.analyzerDetails, this._elements.analyzerDetailsPanel, analyzer, this.analyzerDetailsOpen);
+        if (!this.confirmedArtifact) {
+            this._elements.aiTarget.textContent = '(no confirmed crop)';
+        } else {
+            const suffix = this.draftDirty ? ' · Stale' : ' · Ready';
+            this._elements.aiTarget.textContent = `${this.confirmedArtifact.id}${suffix}`;
+        }
+        this._renderAiStatus(null, textExportReason || targetReason || taskReason || 'Ready.');
+    }
+
     _renderTaskState() {
         const task = this.taskState;
         const renderTarget = (container, show) => {
             container.innerHTML = show && task && task.busy
-                ? `<div class="wb-task"><div><strong>${task.stage || 'Working'}</strong></div><div class="wb-muted">${task.message || ''}</div><div class="wb-row" style="margin-top:8px;"><button id="wb-cancel-task">Cancel</button></div></div>`
+                ? `<div class="wb-task"><div><strong class="wb-task-title"><span class="wb-spinner" aria-hidden="true"></span>${escapeHtml(task.stage || 'Working')}</strong></div><div class="wb-muted">${escapeHtml(task.message || '')}</div>${task.cancellable ? '<div class="wb-row" style="margin-top:8px;"><button id="wb-cancel-task">Cancel</button></div>' : ''}</div>`
                 : '';
         };
         renderTarget(this._elements.taskCrop, true);
         renderTarget(this._elements.taskRun, true);
         renderTarget(this._elements.taskCompare, true);
+        renderTarget(this._elements.taskAi, true);
         const cancelButton = this.host.document.getElementById('wb-cancel-task');
         if (cancelButton) {
             cancelButton.addEventListener('click', () => this.host._post({ type: 'cancelTask' }), { once: true });
@@ -1300,18 +1618,47 @@ export class ONNXWorkbenchUI {
         const hasSelection = this.startKeys.size > 0 && this.endKeys.size > 0;
         const hasConfirmed = !!this.confirmedArtifact;
         const canUseConfirmed = hasConfirmed && !this.draftDirty;
-        const isBusy = !!(this.taskState && this.taskState.busy) || this._renderInProgress;
+        const globalTask = this.toolState && this.toolState.task ? this.toolState.task : null;
+        const isGlobalBusy = !!globalTask;
+        const isBusy = !!(this.taskState && this.taskState.busy) || this._renderInProgress || isGlobalBusy;
+        const exporter = this._resolveToolSelection('exporters', this.selectedExporterId);
+        const formatter = this._resolveToolSelection('exporters', this.selectedFormatterId);
+        const analyzer = this._resolveToolSelection('analyzers', this.selectedAnalyzerId);
+        const supportsCrop = this._providerSupports('crop');
+        const supportsExportArtifact = this._providerSupports('exportArtifact');
+        const supportsInference = this._providerSupports('inference');
+        const supportsCompare = this._providerSupports('compare');
+        const supportsTextExport = this._providerSupports('textExportContext');
+        const supportsInputImport = this._providerSupports('inputImport');
+        const copyExportRunning = !!(globalTask && globalTask.kind === 'copy-export');
+        const analysisRunning = !!(globalTask && globalTask.kind === 'analysis');
+        this._elements.exportCrop.textContent = supportsExportArtifact ? 'Export Crop Artifact' : 'Export Unavailable';
+        this._setButtonRunning(this._elements.copyExportText, copyExportRunning ? 'Copying...' : 'Copy Export Text', copyExportRunning);
+        this._setButtonRunning(this._elements.runAi, analysisRunning ? 'Running...' : 'Analyze', analysisRunning);
+        this._elements.exportCrop.title = this._capabilityReason('exportArtifact', 'artifact export');
+        this._elements.confirmCrop.title = this._capabilityReason('crop', 'crop artifacts');
+        this._elements.runInference.title = this._capabilityReason('inference', 'inference');
+        this._elements.assignA.title = this._capabilityReason('compare', 'compare slots');
+        this._elements.assignB.title = this._capabilityReason('compare', 'compare slots');
+        this._elements.copyExportText.title = this._capabilityReason('textExportContext', 'text export');
+        this._elements.runAi.title = this._capabilityReason('textExportContext', 'AI analysis formatting');
+        this._elements.importInput.title = this._capabilityReason('inputImport', 'input import');
         this._elements.confirmCrop.disabled = !hasSelection || !this.currentSessionId || isBusy;
+        this._elements.confirmCrop.disabled = this._elements.confirmCrop.disabled || !supportsCrop;
         this._elements.barConfirm.disabled = this._elements.confirmCrop.disabled;
-        this._elements.exportCrop.disabled = !canUseConfirmed || isBusy;
-        this._elements.runInference.disabled = (!canUseConfirmed && !this._elements.useFullGraph.checked) || !this.currentSessionId || isBusy || (this._elements.inputMode.value === 'import' && !this.importedInput);
-        this._elements.assignA.disabled = !canUseConfirmed || isBusy;
-        this._elements.assignB.disabled = !canUseConfirmed || isBusy;
-        this._elements.importInput.disabled = isBusy;
-        this._elements.barModeStart.disabled = !this.currentSessionId || isBusy;
-        this._elements.barModeEnd.disabled = !this.currentSessionId || isBusy;
+        this._elements.exportCrop.disabled = !canUseConfirmed || isBusy || !supportsExportArtifact;
+        this._elements.runInference.disabled = (!canUseConfirmed && !this._elements.useFullGraph.checked) || !this.currentSessionId || isBusy || !supportsInference || (this._elements.inputMode.value === 'import' && !this.importedInput);
+        this._elements.assignA.disabled = !canUseConfirmed || isBusy || !supportsCompare;
+        this._elements.assignB.disabled = !canUseConfirmed || isBusy || !supportsCompare;
+        this._elements.copyExportText.disabled = !canUseConfirmed || isBusy || !supportsTextExport || !exporter || exporter.status !== 'ready';
+        this._elements.runAi.disabled = !canUseConfirmed || isBusy || !supportsTextExport || !formatter || formatter.status !== 'ready' || !analyzer || analyzer.status !== 'ready';
+        this._elements.cancelAi.disabled = !(globalTask && globalTask.kind === 'analysis');
+        this._elements.importInput.disabled = isBusy || !supportsInputImport;
+        this._elements.barModeStart.disabled = !this.currentSessionId || isBusy || !supportsCrop;
+        this._elements.barModeEnd.disabled = !this.currentSessionId || isBusy || !supportsCrop;
         this._elements.barClear.disabled = (this.startKeys.size === 0 && this.endKeys.size === 0) || isBusy;
         this._elements.openDrawer.disabled = isBusy;
+        this._renderToolControls();
         this._updateSelectionBar();
     }
 

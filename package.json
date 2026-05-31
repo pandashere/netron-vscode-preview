@@ -24,12 +24,38 @@
     "generate:testmodels": "python3 scripts/generate_onnx_test_models.py --output-dir testdata/generated",
     "generate:vit-unet-3200": "python3 scripts/generate_vit_unet_3200_model.py",
     "benchmark:vit-unet-layout": "python3 scripts/benchmark_vit_unet_layout.py",
-    "smoke:compare-internal": "node scripts/smoke_compare_internal_io.js"
+    "qa:install-ai-tools": "node scripts/install_manual_ai_tools.js",
+    "qa:install-graph-deepseek-tools": "node scripts/install_graph_deepseek_tools.js",
+    "smoke:all": "node scripts/smoke_all.js",
+    "smoke:extension-activation": "node scripts/smoke_extension_activation.js",
+    "smoke:extension-provider-api": "node scripts/smoke_extension_provider_api.js",
+    "smoke:provider-artifact-export": "node scripts/smoke_provider_artifact_export.js",
+    "smoke:package-manifest": "node scripts/smoke_package_manifest.js",
+    "smoke:webview-contract": "node scripts/smoke_webview_contract.js",
+    "smoke:compare-internal": "node scripts/smoke_compare_internal_io.js",
+    "smoke:compare-core": "node scripts/smoke_compare_core.js",
+    "smoke:compare-engine": "node scripts/smoke_compare_engine.js",
+    "smoke:host-compare-state": "node scripts/smoke_host_compare_state.js",
+    "smoke:private-provider-contract": "node scripts/smoke_private_provider_contract.js",
+    "smoke:dev-ir-provider": "node scripts/smoke_dev_ir_provider.js",
+    "smoke:manual-ai-tools": "node scripts/smoke_manual_ai_tools.js",
+    "smoke:graph-deepseek-tools": "node scripts/smoke_graph_deepseek_tools.js",
+    "smoke:copy-export-host-flow": "node scripts/smoke_copy_export_host_flow.js",
+    "smoke:ai-analysis-state": "node scripts/smoke_ai_analysis_state.js",
+    "smoke:ai-panel-contract": "node scripts/smoke_ai_panel_contract.js",
+    "smoke:ai-task-host-flow": "node scripts/smoke_ai_task_host_flow.js",
+    "smoke:core-text-export-context": "node scripts/smoke_core_text_export_context.js",
+    "smoke:text-export-context": "node scripts/smoke_text_export_context.js",
+    "smoke:cli-tools": "node scripts/smoke_cli_tools.js",
+    "smoke:provider-registry": "node scripts/smoke_provider_registry.js",
+    "smoke:private-ir-guide-examples": "node scripts/smoke_private_ir_guide_examples.js"
   },
   "activationEvents": [
     "onCommand:netronPreview.openPreview",
     "onView:netronCompare.compareView",
+    "onView:netronAI.analysisView",
     "onCommand:netronPreview.openCompareCenter",
+    "onCommand:netronPreview.openAiAnalysis",
     "onCommand:netronPreview.clearCompareCenter"
   ],
   "contributes": {
@@ -41,6 +67,10 @@
       {
         "command": "netronPreview.openCompareCenter",
         "title": "Netron: Focus Compare"
+      },
+      {
+        "command": "netronPreview.openAiAnalysis",
+        "title": "Netron: Focus AI Analysis"
       },
       {
         "command": "netronPreview.clearCompareCenter",
@@ -62,6 +92,11 @@
           "type": "webview",
           "id": "netronCompare.compareView",
           "name": "Compare"
+        },
+        {
+          "type": "webview",
+          "id": "netronAI.analysisView",
+          "name": "AI Analysis"
         }
       ]
     },

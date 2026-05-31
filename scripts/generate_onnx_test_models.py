@@ -52,6 +52,32 @@ def make_branch_crop_model(output_path: Path):
     save_model(model, output_path)
 
 
+def make_dev_ir_a_conv_compatible_model(output_path: Path):
+    rng = np.random.default_rng(101)
+    image = helper.make_tensor_value_info('image_a', TensorProto.FLOAT, [1, 3, 8, 8])
+    hidden = helper.make_tensor_value_info('a_hidden', TensorProto.FLOAT, [1, 4, 6, 6])
+    weight = rng.standard_normal((4, 3, 3, 3), dtype=np.float32) * 0.05
+    nodes = [
+        helper.make_node(
+            'Conv',
+            ['image_a', 'a_weight'],
+            ['a_hidden'],
+            name='a-conv',
+            kernel_shape=[3, 3],
+            strides=[1, 1]
+        )
+    ]
+    graph = helper.make_graph(
+        nodes,
+        'dev_ir_a_conv_compatible_graph',
+        [image],
+        [hidden],
+        [numpy_helper.from_array(weight, name='a_weight')]
+    )
+    model = helper.make_model(graph, producer_name='onnx-workbench-generator')
+    save_model(model, output_path)
+
+
 def make_compare_pair(output_dir: Path):
     X = helper.make_tensor_value_info('shared_in', TensorProto.FLOAT, [1, 4])
     Y = helper.make_tensor_value_info('shared_out', TensorProto.FLOAT, [1, 4])
@@ -99,6 +125,7 @@ def main():
     make_large_matmul_model(output_dir / 'large-matmul-singlefile.onnx', args.large_input_dim, args.large_output_dim, args.seed, external=False)
     make_large_matmul_model(output_dir / 'large-matmul-external-data.onnx', args.large_input_dim, args.large_output_dim, args.seed + 1, external=True)
     make_branch_crop_model(output_dir / 'branch-crop-small.onnx')
+    make_dev_ir_a_conv_compatible_model(output_dir / 'dev-ir-a-conv-compatible.onnx')
     make_compare_pair(output_dir)
 
     print(f'Generated ONNX fixtures in: {output_dir}')

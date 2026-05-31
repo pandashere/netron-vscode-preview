@@ -1,0 +1,40 @@
+{
+  "kind": "my-ir",
+  "graph": {
+    "id": "my-ir:sample",
+    "name": "My IR Sample",
+    "inputs": ["input"],
+    "outputs": ["output"],
+    "nodes": [
+      {
+        "id": "conv0",
+        "name": "Conv_0",
+        "type": "Conv",
+        "category": "Layer",
+        "domain": "my.ir",
+        "inputs": [
+          { "name": "X", "tensor": "input" },
+          { "name": "W", "tensor": "weight" }
+        ],
+        "outputs": [{ "name": "Y", "tensor": "hidden" }],
+        "attributes": { "kernel": [3, 3], "stride": [1, 1] }
+      },
+      {
+        "id": "relu0",
+        "name": "Relu_0",
+        "type": "Relu",
+        "category": "Activation",
+        "domain": "my.ir",
+        "inputs": [{ "name": "X", "tensor": "hidden" }],
+        "outputs": [{ "name": "Y", "tensor": "output" }],
+        "attributes": {}
+      }
+    ],
+    "tensors": [
+      { "name": "input", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 3, 8, 8], "kind": "input" },
+      { "name": "weight", "dtype": "float32", "rawDtype": "FLOAT", "shape": [4, 3, 3, 3], "kind": "initializer" },
+      { "name": "hidden", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 4, 6, 6], "kind": "activation" },
+      { "name": "output", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 4, 6, 6], "kind": "output" }
+    ]
+  }
+}

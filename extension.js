@@ -3,11 +3,37 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { ONNXWorkbench, isOnnxFileName } = require('./lib/onnx-workbench');
+const { ToolRegistry, runTool } = require('./lib/cli-tools');
+const { FormatProviderRegistry, createOnnxProvider, providerDiagnostics } = require('./lib/format-providers');
+const { createDevIrProvider } = require('./lib/dev-ir-provider');
+const {
+    assignCompareSlot,
+    cloneCompareState,
+    createEmptyCompareState,
+    setCompareBinding,
+    setCompareRunStatus,
+    setImportedInput
+} = require('./lib/host-compare-state');
+const {
+    exportCompareOutputAsNpy,
+    exportCompareResultAsCsv,
+    exportCompareResultAsJson,
+    runCrossProviderCompare
+} = require('./lib/compare-engine');
+const {
+    analysisCancelling,
+    analysisFailed,
+    analysisStarted,
+    analysisSucceeded,
+    createInitialAiAnalysisState
+} = require('./lib/ai-analysis-state');
 
 const WEBVIEW_READY_TIMEOUT_MS = 10000;
 const COMPARE_CENTER_HTML_VERSION = 3;
+const AI_ANALYSIS_HTML_VERSION = 1;
 const COMPARE_VIEW_CONTAINER_ID = 'netronComparePanel';
 const COMPARE_VIEW_ID = 'netronCompare.compareView';
+const AI_VIEW_ID = 'netronAI.analysisView';
 
 const state = {
     context: null,
@@ -16,9 +42,21 @@ const state = {
     compareView: null,
     compareViewReady: false,
     pendingCompareState: null,
+    compareState: createEmptyCompareState(),
+    compareRawOutputs: new Map(),
+    compareProviderId: null,
+    aiView: null,
+    aiViewReady: false,
+    pendingAiState: null,
     panels: new Map(),
-    workbench: null
+    workbench: null,
+    exporterRegistry: null,
+    analyzerRegistry: null,
+    providerRegistry: null,
+    globalTask: null,
+    aiState: createInitialAiAnalysisState()
 };
+const pendingFormatProviders = [];
 
 function createRequestId() {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -58,6 +96,10 @@ function createPanelState(panel) {
         currentModelUri: null,
         currentSessionId: null,
         currentArtifactId: null,
+        currentProviderId: null,
+        selectedExporterId: null,
+        selectedFormatterId: null,
+        selectedAnalyzerId: null,
         activity: [],
         currentTask: null,
         cancelRequested: false
@@ -106,6 +148,62 @@ function addPanelActivity(panelState, level, message, detail) {
         type: 'activityLog',
         entries: panelState.activity
     });
+}
+
+function getToolRoots() {
+    const base = path.join(os.homedir(), '.netron', 'vscode-preview');
+    return {
+        exporters: path.join(base, 'exporters'),
+        analyzers: path.join(base, 'analyzers')
+    };
+}
+
+function getToolState() {
+    return {
+        exporters: state.exporterRegistry ? state.exporterRegistry.getSnapshot() : { kind: 'exporter', entries: [] },
+        analyzers: state.analyzerRegistry ? state.analyzerRegistry.getSnapshot() : { kind: 'analyzer', entries: [] },
+        task: state.globalTask ? {
+            id: state.globalTask.id,
+            kind: state.globalTask.kind,
+            status: state.globalTask.status,
+            message: state.globalTask.message,
+            startedAt: state.globalTask.startedAt,
+            sourcePanelId: state.globalTask.sourcePanelId
+        } : null
+    };
+}
+
+function broadcastToolState() {
+    const toolState = getToolState();
+    for (const panelState of state.panels.values()) {
+        enqueuePanelMessage(panelState, { type: 'toolStateUpdate', state: toolState });
+    }
+}
+
+function setGlobalTask(task) {
+    state.globalTask = task;
+    broadcastToolState();
+}
+
+function clearGlobalTask(taskId) {
+    if (!taskId || (state.globalTask && state.globalTask.id === taskId)) {
+        state.globalTask = null;
+        broadcastToolState();
+    }
+}
+
+function attachGlobalTaskProcess(taskId, child) {
+    if (!state.globalTask || state.globalTask.id !== taskId) {
+        return;
+    }
+    state.globalTask.process = child;
+    if (state.globalTask.cancelRequested && child && typeof child.kill === 'function') {
+        try {
+            child.kill('SIGTERM');
+        } catch (error) {
+            appendLog('warn', 'failed to kill cancelled task process', { message: error.message });
+        }
+    }
 }
 
 function updatePanelTask(panelState, patch) {
@@ -194,6 +292,47 @@ function createCompareViewProvider() {
     };
 }
 
+function createAiViewProvider() {
+    return {
+        resolveWebviewView(webviewView) {
+            const disposables = [];
+            state.aiView = webviewView;
+            state.aiViewReady = false;
+            webviewView.title = 'AI Analysis';
+            webviewView.description = 'Latest crop analysis result';
+            webviewView.webview.options = {
+                enableScripts: true
+            };
+            webviewView.webview.html = buildAiAnalysisHtml(webviewView.webview);
+            webviewView.__aiHtmlVersion = AI_ANALYSIS_HTML_VERSION;
+            webviewView.onDidDispose(() => {
+                if (state.aiView === webviewView) {
+                    state.aiView = null;
+                    state.aiViewReady = false;
+                }
+                while (disposables.length > 0) {
+                    const disposable = disposables.pop();
+                    if (disposable) {
+                        disposable.dispose();
+                    }
+                }
+            }, null, disposables);
+            webviewView.onDidChangeVisibility(() => {
+                if (state.aiView === webviewView && webviewView.visible) {
+                    flushAiState();
+                }
+            }, null, disposables);
+            webviewView.webview.onDidReceiveMessage((message) => {
+                handleAiPanelMessage(message).catch((error) => {
+                    appendLog('error', 'ai view message failed', { type: message && message.type, message: error.message });
+                    vscode.window.showErrorMessage(error.message);
+                });
+            }, null, disposables);
+            flushAiState();
+        }
+    };
+}
+
 function canPostCompareState() {
     return !!(state.compareView && state.compareViewReady && state.compareView.visible);
 }
@@ -225,15 +364,181 @@ async function focusCompareView(preserveFocus = false) {
     pushCompareState();
 }
 
+function canPostAiState() {
+    return !!(state.aiView && state.aiViewReady && state.aiView.visible);
+}
+
+function pushAiState(snapshot) {
+    state.pendingAiState = snapshot || state.aiState;
+    flushAiState();
+}
+
+function flushAiState() {
+    if (!canPostAiState() || !state.pendingAiState) {
+        return;
+    }
+    const aiState = state.pendingAiState;
+    state.aiView.webview.postMessage({ type: 'aiStateUpdate', state: aiState }).then((posted) => {
+        if (posted !== false && state.pendingAiState === aiState) {
+            state.pendingAiState = null;
+        }
+    }).catch(() => {});
+}
+
+async function focusAiView(preserveFocus = false) {
+    if (state.aiView && state.aiView.__aiHtmlVersion !== AI_ANALYSIS_HTML_VERSION) {
+        state.aiView.webview.html = buildAiAnalysisHtml(state.aiView.webview);
+        state.aiView.__aiHtmlVersion = AI_ANALYSIS_HTML_VERSION;
+        state.aiViewReady = false;
+    }
+    if (!state.aiView) {
+        await vscode.commands.executeCommand(`workbench.view.extension.${COMPARE_VIEW_CONTAINER_ID}`);
+    }
+    if (state.aiView) {
+        state.aiView.show(preserveFocus);
+    }
+    pushAiState();
+}
+
+function updateAiState(patch) {
+    state.aiState = {
+        ...state.aiState,
+        ...patch,
+        updatedAt: new Date().toISOString()
+    };
+    pushAiState(state.aiState);
+}
+
+function registerFormatProvider(provider) {
+    if (state.providerRegistry) {
+        state.providerRegistry.register(provider);
+        appendLog('info', 'format provider registered', { providerId: provider.id });
+    } else {
+        const diagnostics = providerDiagnostics(provider);
+        if (diagnostics.errors.length > 0) {
+            throw new Error(diagnostics.errors.join(' '));
+        }
+        if (pendingFormatProviders.some((item) => item.id === provider.id)) {
+            throw new Error(`Duplicate provider id: ${provider.id}`);
+        }
+        pendingFormatProviders.push(provider);
+    }
+    return {
+        dispose() {
+            unregisterFormatProvider(provider.id);
+        }
+    };
+}
+
+function unregisterFormatProvider(providerId) {
+    const pendingIndex = pendingFormatProviders.findIndex((provider) => provider.id === providerId);
+    if (pendingIndex >= 0) {
+        pendingFormatProviders.splice(pendingIndex, 1);
+        return true;
+    }
+    if (state.providerRegistry) {
+        const removed = state.providerRegistry.unregister(providerId);
+        if (removed) {
+            appendLog('info', 'format provider unregistered', { providerId });
+        }
+        return removed;
+    }
+    return false;
+}
+
+function getFormatProviders() {
+    if (state.providerRegistry) {
+        return state.providerRegistry.list().map((provider) => ({
+            id: provider.id,
+            label: provider.label || provider.id,
+            capabilities: { ...(provider.capabilities || {}) }
+        }));
+    }
+    return pendingFormatProviders.map((provider) => ({
+        id: provider.id,
+        label: provider.label || provider.id,
+        capabilities: { ...(provider.capabilities || {}) }
+    }));
+}
+
+function getFormatProviderDiagnostics(providerId) {
+    if (state.providerRegistry) {
+        return state.providerRegistry.getDiagnostics(providerId);
+    }
+    if (providerId) {
+        const provider = pendingFormatProviders.find((item) => item.id === providerId);
+        return provider ? providerDiagnostics(provider) : { errors: [], warnings: [`Provider '${providerId}' is not registered.`] };
+    }
+    return pendingFormatProviders.map((provider) => ({
+        id: provider.id,
+        ...providerDiagnostics(provider)
+    }));
+}
+
+function createExtensionApi() {
+    return {
+        registerFormatProvider,
+        unregisterFormatProvider,
+        getFormatProviders,
+        getFormatProviderDiagnostics
+    };
+}
+
+function providerInfo(provider) {
+    if (!provider) {
+        return null;
+    }
+    return {
+        id: provider.id,
+        label: provider.label || provider.id,
+        capabilities: { ...(provider.capabilities || {}) }
+    };
+}
+
 async function activate(context) {
     state.context = context;
     state.output = vscode.window.createOutputChannel('Netron Preview');
     context.subscriptions.push(state.output);
     state.workbench = new ONNXWorkbench(context, (level, message, detail) => appendLog(level, message, detail));
+    state.providerRegistry = new FormatProviderRegistry();
+    state.providerRegistry.register(createOnnxProvider(state.workbench, isOnnxFileName));
+    state.providerRegistry.register(createDevIrProvider({ id: 'dev-ir-a', label: 'Dev IR A' }));
+    state.providerRegistry.register(createDevIrProvider({ id: 'dev-ir-b', label: 'Dev IR B' }));
+    while (pendingFormatProviders.length > 0) {
+        state.providerRegistry.register(pendingFormatProviders.shift());
+    }
     state.workbench.onChange(() => {
         broadcastCompareState();
     });
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(COMPARE_VIEW_ID, createCompareViewProvider(), {
+        webviewOptions: {
+            retainContextWhenHidden: true
+        }
+    }));
+    const toolRoots = getToolRoots();
+    state.exporterRegistry = new ToolRegistry({
+        kind: 'exporter',
+        rootDir: toolRoots.exporters,
+        defaultTimeoutMs: 30000,
+        maxTimeoutMs: 300000,
+        logger: (level, message, detail) => appendLog(level, message, detail)
+    });
+    state.analyzerRegistry = new ToolRegistry({
+        kind: 'analyzer',
+        rootDir: toolRoots.analyzers,
+        defaultTimeoutMs: 120000,
+        maxTimeoutMs: 300000,
+        logger: (level, message, detail) => appendLog(level, message, detail)
+    });
+    state.exporterRegistry.onChange(() => broadcastToolState());
+    state.analyzerRegistry.onChange(() => broadcastToolState());
+    state.exporterRegistry.refresh();
+    state.analyzerRegistry.refresh();
+    state.exporterRegistry.startWatching();
+    state.analyzerRegistry.startWatching();
+    context.subscriptions.push({ dispose: () => state.exporterRegistry && state.exporterRegistry.stopWatching() });
+    context.subscriptions.push({ dispose: () => state.analyzerRegistry && state.analyzerRegistry.stopWatching() });
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(AI_VIEW_ID, createAiViewProvider(), {
         webviewOptions: {
             retainContextWhenHidden: true
         }
@@ -259,9 +564,14 @@ async function activate(context) {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('netronPreview.clearCompareCenter', async () => {
-        state.workbench.clearCompare();
+        clearActiveCompare();
         vscode.window.showInformationMessage('Netron Compare cleared.');
     }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('netronPreview.openAiAnalysis', async () => {
+        await focusAiView(false);
+    }));
+    return createExtensionApi();
 }
 
 async function resolveModelUri(resource) {
@@ -829,6 +1139,143 @@ vscode.postMessage({ type: 'ready' });
 </html>`;
 }
 
+function buildAiAnalysisHtml(webview) {
+    const nonce = createRequestId().replace(/[^a-z0-9]/gi, '');
+    const csp = webview.cspSource;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${csp} data:; style-src ${csp} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Analysis</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 12px; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
+.app { width: 100%; max-width: 1200px; margin: 0 auto; display: grid; gap: 12px; }
+.section { border: 1px solid var(--vscode-panel-border); border-radius: 10px; padding: 12px; background: color-mix(in srgb, var(--vscode-editor-background) 92%, white); }
+.title { font-size: 15px; font-weight: 600; }
+.subtitle { font-size: 12px; opacity: 0.75; }
+.meta { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 8px; }
+.meta-item { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 8px; }
+.meta-label { font-size: 11px; text-transform: uppercase; opacity: 0.72; margin-bottom: 4px; }
+.meta-value { font-size: 12px; word-break: break-word; }
+.result { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; min-height: 120px; }
+.status { font-size: 12px; padding: 6px 0; }
+.status.running { color: var(--vscode-textLink-foreground); }
+.status.failed { color: var(--vscode-testing-iconFailed); }
+.status.warn { color: var(--vscode-testing-iconQueued); }
+.status-line { display: inline-flex; align-items: center; gap: 6px; }
+.spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: spin 0.8s linear infinite; flex: 0 0 auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+button { border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 6px 12px; min-height: 32px; cursor: pointer; }
+button.secondary { background: transparent; color: inherit; border-color: var(--vscode-panel-border); }
+button[disabled] { opacity: 0.5; cursor: not-allowed; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.reason { font-size: 12px; opacity: 0.82; }
+.badge { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 0 8px; border: 1px solid var(--vscode-panel-border); margin-left: 8px; font-size: 12px; }
+.stale { border-color: color-mix(in srgb, var(--vscode-testing-iconQueued) 45%, var(--vscode-panel-border)); }
+.stale-note { margin-top: 8px; font-size: 12px; opacity: 0.8; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="section">
+    <div class="title">AI Analysis</div>
+    <div id="status" class="status">Loading...</div>
+    <div id="reason" class="reason"></div>
+    <div class="meta" id="meta"></div>
+  </div>
+  <div class="section">
+    <div class="title">Result <span id="staleBadge" class="badge stale" style="display:none;">Stale</span></div>
+    <div id="result" class="result">(no result)</div>
+    <div id="staleNote" class="stale-note" style="display:none;">This result is from a previous successful analysis.</div>
+  </div>
+  <div class="section">
+    <div class="actions">
+      <button id="copyResult" class="secondary" disabled>Copy Result</button>
+      <button id="cancelTask" class="secondary" disabled>Cancel</button>
+    </div>
+  </div>
+</div>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const el = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+let aiState = null;
+const renderMeta = (state) => {
+  if (!state || !state.source) {
+    el('meta').innerHTML = '<div class="meta-item"><div class="meta-label">Source</div><div class="meta-value">(none)</div></div>';
+    return;
+  }
+  const source = state.source;
+  const items = [
+    ['Model File', source.modelFile || ''],
+    ['Model Path', source.modelPath || ''],
+    ['Artifact ID', source.artifactId || ''],
+    ['Graph ID', source.graphId || ''],
+    ['Exporter ID', source.exporterId || ''],
+    ['Analyzer ID', source.analyzerId || ''],
+    ['Time', source.time || '']
+  ];
+  el('meta').innerHTML = items.map(([label, value]) => '<div class="meta-item"><div class="meta-label">' + escapeHtml(label) + '</div><div class="meta-value">' + escapeHtml(value || '(none)') + '</div></div>').join('');
+};
+const render = (state) => {
+  aiState = state || {};
+  const status = String(aiState.status || 'idle');
+  const message = aiState.message || 'Ready.';
+  el('status').innerHTML = status === 'running'
+    ? '<span class="status-line"><span class="spinner" aria-hidden="true"></span><span>' + escapeHtml(message) + '</span></span>'
+    : escapeHtml(message);
+  el('status').className = 'status ' + (status === 'running' ? 'running' : status === 'failed' ? 'failed' : status === 'stale' ? 'warn' : '');
+  el('reason').textContent = aiState.error && aiState.error.message ? aiState.error.message : '';
+  renderMeta(aiState);
+  const result = aiState.result;
+  if (result && typeof result.text === 'string' && result.text.length > 0) {
+    el('result').textContent = result.text;
+    el('result').classList.remove('empty');
+    el('copyResult').disabled = false;
+    if (aiState.resultStale) {
+      el('staleBadge').style.display = 'inline-flex';
+      el('staleNote').style.display = 'block';
+    } else {
+      el('staleBadge').style.display = 'none';
+      el('staleNote').style.display = 'none';
+    }
+  } else {
+    el('result').textContent = status === 'running' ? '(running)' : '(no result)';
+    el('copyResult').disabled = true;
+    el('staleBadge').style.display = 'none';
+    el('staleNote').style.display = 'none';
+  }
+  el('cancelTask').disabled = status !== 'running';
+};
+window.addEventListener('message', (event) => {
+  const message = event.data;
+  if (message && message.type === 'aiStateUpdate') {
+    render(message.state);
+  } else if (message && message.type === 'clipboardCopied') {
+    el('reason').textContent = (message.label || 'Text') + ' copied to clipboard.';
+  } else if (message && message.type === 'clipboardError') {
+    el('reason').textContent = message.message || 'Clipboard operation failed.';
+  }
+});
+el('copyResult').addEventListener('click', () => {
+  if (aiState && aiState.result && typeof aiState.result.text === 'string') {
+    vscode.postMessage({ type: 'copyText', text: aiState.result.text, label: 'AI Result' });
+  }
+});
+el('cancelTask').addEventListener('click', () => vscode.postMessage({ type: 'cancelTask' }));
+vscode.postMessage({ type: 'ready' });
+</script>
+</body>
+</html>`;
+}
+
 async function handleModelPanelMessage(panelState, message) {
     if (!message || typeof message.type !== 'string') {
         return;
@@ -841,8 +1288,9 @@ async function handleModelPanelMessage(panelState, message) {
                 panelState.readyTimer = null;
             }
             await flushPanelMessages(panelState);
-            enqueuePanelMessage(panelState, { type: 'compareStateUpdate', state: state.workbench.getCompareState() });
+            enqueuePanelMessage(panelState, { type: 'compareStateUpdate', state: getCompareState() });
             enqueuePanelMessage(panelState, { type: 'activityLog', entries: panelState.activity });
+            enqueuePanelMessage(panelState, { type: 'toolStateUpdate', state: getToolState() });
             break;
         case 'requestOpenModel': {
             const uri = await resolveModelUri(null);
@@ -855,7 +1303,11 @@ async function handleModelPanelMessage(panelState, message) {
             await focusCompareView(false);
             break;
         case 'confirmCrop': {
-            const artifact = await state.workbench.createCropArtifact({
+            const provider = getPanelProvider(panelState);
+            if (typeof provider.createCropArtifact !== 'function') {
+                throw new Error(`Provider '${provider.id}' does not support crop artifacts.`);
+            }
+            const artifact = await provider.createCropArtifact({
                 sessionId: panelState.currentSessionId,
                 startKeys: message.startKeys || [],
                 endKeys: message.endKeys || []
@@ -877,30 +1329,53 @@ async function handleModelPanelMessage(panelState, message) {
             break;
         }
         case 'exportCropOnnx': {
-            const artifact = state.workbench.getArtifact(message.artifactId || panelState.currentArtifactId);
-            if (!artifact) {
+            const provider = getPanelProvider(panelState);
+            const artifactId = message.artifactId || panelState.currentArtifactId;
+            if (!artifactId) {
                 throw new Error('No confirmed crop artifact available.');
             }
-            const session = state.workbench.getSession(artifact.modelSessionId);
-            const baseName = `${path.basename(session.filePath, path.extname(session.filePath))}.${artifact.id}.crop.onnx`;
+            if (typeof provider.exportArtifact !== 'function') {
+                throw new Error(`Provider '${provider.id}' does not support artifact export.`);
+            }
+            const exportTarget = typeof provider.getExportTarget === 'function'
+                ? provider.getExportTarget(artifactId, { weightMode: message.weightMode || '' })
+                : {
+                    artifactId,
+                    defaultFileName: `${artifactId}.crop.bin`,
+                    filters: { Model: ['bin'] },
+                    title: 'Export Crop Artifact',
+                    stage: 'Export artifact',
+                    message: 'Exporting crop artifact...',
+                    options: {}
+                };
             const saveUri = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.joinPath(getDefaultFolder(), baseName),
-                filters: { ONNX: ['onnx'] },
-                title: 'Export Crop ONNX'
+                defaultUri: vscode.Uri.joinPath(getDefaultFolder(), exportTarget.defaultFileName || `${artifactId}.crop.bin`),
+                filters: exportTarget.filters || { Model: ['bin'] },
+                title: exportTarget.title || 'Export Crop Artifact'
             });
             if (!saveUri) {
                 break;
             }
-            updatePanelTask(panelState, { status: 'running', stage: '重建 ONNX', message: 'Exporting crop ONNX...', startedAt: new Date().toISOString(), cancellable: false, busy: true });
-            const useExternal = /external/i.test(message.weightMode || '') || (session.graphInfo.initializers.size > 0 && ensureExternalData(session));
-            const result = await state.workbench.exportArtifact(artifact.id, saveUri.fsPath || saveUri.path, { externalData: useExternal, inlineWeights: !useExternal });
+            updatePanelTask(panelState, {
+                status: 'running',
+                stage: exportTarget.stage || 'Export artifact',
+                message: exportTarget.message || 'Exporting crop artifact...',
+                startedAt: new Date().toISOString(),
+                cancellable: false,
+                busy: true
+            });
+            const result = await provider.exportArtifact(exportTarget.artifactId || artifactId, saveUri.fsPath || saveUri.path, exportTarget.options || {});
             clearPanelTask(panelState);
-            addPanelActivity(panelState, 'info', 'Crop ONNX exported', result);
+            addPanelActivity(panelState, 'info', 'Crop artifact exported', result);
             enqueuePanelMessage(panelState, { type: 'artifactExported', exportInfo: result });
-            vscode.window.showInformationMessage(`Crop ONNX exported: ${result.filePath}`);
+            vscode.window.showInformationMessage(`Crop artifact exported: ${result.filePath || (saveUri.fsPath || saveUri.path)}`);
             break;
         }
         case 'importInputFile': {
+            const provider = getPanelProvider(panelState);
+            if (typeof provider.importInputFile !== 'function') {
+                throw new Error(`Provider '${provider.id}' does not support input import.`);
+            }
             const picked = await vscode.window.showOpenDialog({
                 canSelectMany: false,
                 canSelectFiles: true,
@@ -912,14 +1387,18 @@ async function handleModelPanelMessage(panelState, message) {
             if (!picked || picked.length === 0) {
                 break;
             }
-            const imported = await state.workbench.importInputFile(picked[0].fsPath || picked[0].path);
+            const imported = await provider.importInputFile(picked[0].fsPath || picked[0].path);
             enqueuePanelMessage(panelState, { type: 'inputImported', token: imported.token, preview: imported.preview });
             addPanelActivity(panelState, 'info', 'Input file imported', { preview: imported.preview });
             break;
         }
         case 'runInference': {
+            const provider = getPanelProvider(panelState);
+            if (typeof provider.runInference !== 'function') {
+                throw new Error(`Provider '${provider.id}' does not support inference.`);
+            }
             updatePanelTask(panelState, { status: 'running', stage: '执行推理', message: 'Running inference...', startedAt: new Date().toISOString(), cancellable: false, busy: true });
-            const result = await state.workbench.runInference({
+            const result = await provider.runInference({
                 artifactId: message.artifactId || panelState.currentArtifactId,
                 sessionId: panelState.currentSessionId,
                 useFullGraph: !!message.useFullGraph,
@@ -933,18 +1412,49 @@ async function handleModelPanelMessage(panelState, message) {
             break;
         }
         case 'assignCompareSlot': {
-            const compareState = state.workbench.assignCompareSlot(message.slot, message.artifactId || panelState.currentArtifactId);
+            const provider = getPanelProvider(panelState);
+            setCompareProvider(provider);
+            if (typeof provider.getCompareSlot !== 'function') {
+                throw new Error(`Provider '${provider.id}' does not support compare slots.`);
+            }
+            const slot = provider.getCompareSlot(message.artifactId || panelState.currentArtifactId);
+            const compareState = assignHostCompareSlot(message.slot, slot);
             addPanelActivity(panelState, 'info', `Assigned artifact to compare slot ${message.slot}`, { artifactId: message.artifactId || panelState.currentArtifactId });
             broadcastCompareState(compareState);
             await focusCompareView(false);
             break;
         }
         case 'requestCompareState':
-            enqueuePanelMessage(panelState, { type: 'compareStateUpdate', state: state.workbench.getCompareState() });
+            enqueuePanelMessage(panelState, { type: 'compareStateUpdate', state: getCompareState() });
+            break;
+        case 'selectExporter':
+            panelState.selectedExporterId = typeof message.id === 'string' ? message.id : null;
+            enqueuePanelMessage(panelState, { type: 'toolStateUpdate', state: getToolState() });
+            break;
+        case 'selectFormatter':
+            panelState.selectedFormatterId = typeof message.id === 'string' ? message.id : null;
+            enqueuePanelMessage(panelState, { type: 'toolStateUpdate', state: getToolState() });
+            break;
+        case 'selectAnalyzer':
+            panelState.selectedAnalyzerId = typeof message.id === 'string' ? message.id : null;
+            enqueuePanelMessage(panelState, { type: 'toolStateUpdate', state: getToolState() });
+            break;
+        case 'copyExportText':
+            await handleCopyExportText(panelState, message);
+            break;
+        case 'runAiAnalysis':
+            await handleRunAiAnalysis(panelState, message);
+            break;
+        case 'cancelAiTask':
+            cancelGlobalTask();
             break;
         case 'requestTensorPreview': {
             try {
-                const preview = await state.workbench.getTensorPreview(message.sessionId || panelState.currentSessionId, message.tensorName, { limit: message.limit || 64 });
+                const provider = getPanelProvider(panelState);
+                if (typeof provider.getTensorPreview !== 'function') {
+                    throw new Error(`Provider '${provider.id}' does not support tensor preview.`);
+                }
+                const preview = await provider.getTensorPreview(message.sessionId || panelState.currentSessionId, message.tensorName, { limit: message.limit || 64 });
                 enqueuePanelMessage(panelState, {
                     type: 'tensorPreviewResult',
                     requestId: message.requestId || null,
@@ -998,11 +1508,12 @@ async function handleCompareCenterMessage(message) {
             pushCompareState();
             break;
         case 'clearCompare':
-            state.workbench.clearCompare();
+            clearActiveCompare();
             vscode.window.showInformationMessage('Netron Compare cleared.');
             break;
         case 'setCompareBinding':
-            state.workbench.setCompareBinding(message.kind, message.sourceName, message.targetName);
+            setHostCompareBinding(message.kind, message.sourceName, message.targetName);
+            broadcastCompareState();
             break;
         case 'importCompareInput': {
             const picked = await vscode.window.showOpenDialog({
@@ -1014,18 +1525,19 @@ async function handleCompareCenterMessage(message) {
                 title: 'Import compare input (.json / .npz)'
             });
             if (picked && picked.length > 0) {
-                const imported = await state.workbench.importInputFile(picked[0].fsPath || picked[0].path);
-                state.workbench.setCompareImportedInput(imported);
+                const provider = getCompareProvider();
+                const imported = await provider.importInputFile(picked[0].fsPath || picked[0].path);
+                setImportedInput(state.compareState, imported, provider.id);
+                broadcastCompareState();
             }
             break;
         }
         case 'runCompare': {
-            const compareState = await state.workbench.runCompare({
+            const compareState = await runHostCompare({
                 inputMode: message.inputMode || 'zeros',
-                inputShapes: message.inputShapes || {},
-                importToken: state.workbench.getCompareState().importedInput && state.workbench.getCompareState().importedInput.token
+                inputShapes: message.inputShapes || {}
             });
-            pushCompareState(compareState);
+            broadcastCompareState(compareState);
             break;
         }
         case 'exportCompareJson': {
@@ -1035,7 +1547,7 @@ async function handleCompareCenterMessage(message) {
                 title: 'Export compare result as JSON'
             });
             if (saveUri) {
-                await vscode.workspace.fs.writeFile(saveUri, Buffer.from(state.workbench.exportCompareResultAsJson(), 'utf8'));
+                await vscode.workspace.fs.writeFile(saveUri, Buffer.from(exportCompareResultAsJson(state.compareState), 'utf8'));
             }
             break;
         }
@@ -1046,12 +1558,12 @@ async function handleCompareCenterMessage(message) {
                 title: 'Export compare result as CSV'
             });
             if (saveUri) {
-                await vscode.workspace.fs.writeFile(saveUri, Buffer.from(state.workbench.exportCompareResultAsCsv(), 'utf8'));
+                await vscode.workspace.fs.writeFile(saveUri, Buffer.from(exportCompareResultAsCsv(state.compareState), 'utf8'));
             }
             break;
         }
         case 'exportCompareOutputNpy': {
-            const exported = state.workbench.exportCompareOutputAsNpy({
+            const exported = exportCompareOutputAsNpy(state.compareState, state.compareRawOutputs, {
                 side: message.side,
                 sourceName: message.sourceName,
                 targetName: message.targetName
@@ -1071,16 +1583,338 @@ async function handleCompareCenterMessage(message) {
     }
 }
 
+async function handleAiPanelMessage(message) {
+    if (!message || typeof message.type !== 'string') {
+        return;
+    }
+    switch (message.type) {
+        case 'ready':
+            state.aiViewReady = true;
+            pushAiState();
+            break;
+        case 'copyText':
+            await handleCopyText(state.aiView, message);
+            break;
+        case 'cancelTask':
+            cancelGlobalTask();
+            break;
+        default:
+            break;
+    }
+}
+
+function cancelGlobalTask() {
+    if (!state.globalTask) {
+        return;
+    }
+    state.globalTask.cancelRequested = true;
+    state.globalTask.message = 'Cancelling...';
+    if (state.globalTask.process && typeof state.globalTask.process.kill === 'function') {
+        try {
+            state.globalTask.process.kill('SIGTERM');
+        } catch (error) {
+            appendLog('warn', 'failed to kill global task process', { message: error.message });
+        }
+    }
+    broadcastToolState();
+    if (state.globalTask.kind === 'analysis') {
+        updateAiState(analysisCancelling());
+    }
+}
+
+function resolveReadyEntry(registry, id, label) {
+    const entry = id ? registry.getEntry(id) : registry.getFirstReady();
+    if (!entry) {
+        throw new Error(`No ${label} available.`);
+    }
+    if (entry.status !== 'ready') {
+        throw new Error(entry.reason || `Selected ${label} is not available.`);
+    }
+    return entry;
+}
+
+function getPanelProvider(panelState) {
+    if (!panelState || !panelState.currentProviderId || !state.providerRegistry) {
+        throw new Error('No host provider is active for this model.');
+    }
+    const provider = state.providerRegistry.get(panelState.currentProviderId);
+    if (!provider) {
+        throw new Error(`Active provider '${panelState.currentProviderId}' is not registered.`);
+    }
+    return provider;
+}
+
+function getCompareProvider() {
+    if (!state.providerRegistry) {
+        throw new Error('No provider registry is available.');
+    }
+    const providerId = state.compareProviderId || 'onnx';
+    const provider = state.providerRegistry.get(providerId);
+    if (!provider) {
+        throw new Error(`Compare provider '${providerId}' is not registered.`);
+    }
+    return provider;
+}
+
+function setCompareProvider(provider) {
+    if (!provider || !provider.id) {
+        throw new Error('Compare provider is required.');
+    }
+    state.compareProviderId = provider.id;
+}
+
+function clearActiveCompare() {
+    if (state.providerRegistry) {
+        for (const provider of state.providerRegistry.list()) {
+            if (provider && typeof provider.clearCompare === 'function') {
+                provider.clearCompare();
+            }
+        }
+    }
+    state.compareProviderId = null;
+    state.compareState = createEmptyCompareState();
+    state.compareRawOutputs.clear();
+    broadcastCompareState();
+}
+
+function getCompareState() {
+    return cloneCompareState(state.compareState);
+}
+
+function assignHostCompareSlot(slotName, slot) {
+    assignCompareSlot(state.compareState, slotName, slot);
+    state.compareRawOutputs.clear();
+    return getCompareState();
+}
+
+function setHostCompareBinding(kind, sourceName, targetName) {
+    setCompareBinding(state.compareState, kind, sourceName, targetName);
+    return getCompareState();
+}
+
+function resolveHostImportedInput() {
+    const imported = state.compareState.importedInput;
+    if (!imported || !imported.token) {
+        return null;
+    }
+    const provider = state.providerRegistry && state.providerRegistry.get(imported.providerId || state.compareProviderId || 'onnx');
+    if (!provider || typeof provider.resolveImportedInput !== 'function') {
+        throw new Error('Imported compare input is not available.');
+    }
+    return provider.resolveImportedInput(imported.token);
+}
+
+async function runHostCompare(options = {}) {
+    setCompareRunStatus(state.compareState, 'running', '校验/生成共享输入', '');
+    broadcastCompareState();
+    try {
+        const result = await runCrossProviderCompare(state.compareState, state.providerRegistry, {
+            inputMode: options.inputMode || 'zeros',
+            inputShapes: options.inputShapes || {},
+            importedInput: resolveHostImportedInput(),
+            createRunId: () => createRequestId(),
+            onStage: (stage) => {
+                const label = stage === 'B' ? '执行 B' : '执行 A';
+                setCompareRunStatus(state.compareState, 'running', label, '');
+                broadcastCompareState();
+            }
+        });
+        state.compareState = result.compareState;
+        state.compareRawOutputs.set(state.compareState.compareResult.rawOutputRef, result.rawOutputs);
+        return getCompareState();
+    } catch (error) {
+        setCompareRunStatus(state.compareState, 'failed', '', error && error.message ? error.message : String(error));
+        broadcastCompareState();
+        throw error;
+    }
+}
+
+function buildSourceFromTarget(target, exporterEntry, analyzerEntry) {
+    return {
+        modelFile: target.model.fileName,
+        modelPath: target.model.filePath,
+        artifactId: target.artifact.id,
+        graphId: target.graph.id,
+        exporterId: exporterEntry && exporterEntry.id ? exporterEntry.id : '',
+        analyzerId: analyzerEntry && analyzerEntry.id ? analyzerEntry.id : '',
+        time: new Date().toISOString()
+    };
+}
+
+function getTargetAndContextForPanelArtifact(panelState) {
+    const artifactId = panelState.currentArtifactId;
+    if (!artifactId) {
+        throw new Error('No confirmed crop artifact available.');
+    }
+    const provider = getPanelProvider(panelState);
+    if (typeof provider.getCropTarget !== 'function' || typeof provider.buildTextExportContext !== 'function') {
+        throw new Error(`Provider '${provider.id}' does not support text export context.`);
+    }
+    const target = provider.getCropTarget(artifactId);
+    const context = provider.buildTextExportContext(artifactId);
+    return { target, context };
+}
+
+async function handleCopyExportText(panelState, message) {
+    if (state.globalTask) {
+        throw new Error('Another export/analysis task is running.');
+    }
+    const taskId = createRequestId();
+    const exporterId = message.exporterId || panelState.selectedExporterId;
+    const exporter = resolveReadyEntry(state.exporterRegistry, exporterId, 'exporter');
+    const { target, context } = getTargetAndContextForPanelArtifact(panelState);
+    setGlobalTask({
+        id: taskId,
+        kind: 'copy-export',
+        status: 'running',
+        message: 'Copying export text...',
+        startedAt: new Date().toISOString(),
+        sourcePanelId: panelState.id,
+        process: null,
+        cancelRequested: false
+    });
+    updatePanelTask(panelState, {
+        status: 'running',
+        stage: 'Copying export text',
+        message: 'Copying export text...',
+        startedAt: new Date().toISOString(),
+        cancellable: false,
+        busy: true
+    });
+    try {
+        const result = await runTool(exporter, JSON.stringify(context, null, 2), {
+            kind: 'exporter',
+            label: 'Exporter',
+            onProcess: (child) => {
+                attachGlobalTaskProcess(taskId, child);
+            }
+        });
+        await vscode.env.clipboard.writeText(result.stdout);
+        addPanelActivity(panelState, 'info', 'Export text copied', {
+            exporterId: exporter.id,
+            artifactId: target.artifact.id,
+            graphId: target.graph.id
+        });
+        enqueuePanelMessage(panelState, { type: 'exportTextCopied', exporterId: exporter.id });
+        appendLog('info', 'export text copied', { exporterId: exporter.id, artifactId: target.artifact.id, stderr: result.stderr ? result.stderr.slice(0, 500) : '' });
+    } catch (error) {
+        addPanelActivity(panelState, 'error', 'Export text failed', {
+            exporterId: exporter.id,
+            artifactId: target.artifact.id,
+            graphId: target.graph.id,
+            message: error.message
+        });
+        enqueuePanelMessage(panelState, { type: 'exportTextError', message: error.message });
+        appendLog('error', 'export text failed', { exporterId: exporter.id, message: error.message, stderr: error.stderr });
+        throw error;
+    } finally {
+        clearPanelTask(panelState);
+        clearGlobalTask(taskId);
+    }
+}
+
+async function handleRunAiAnalysis(panelState, message) {
+    if (state.globalTask) {
+        throw new Error('Another export/analysis task is running.');
+    }
+    const taskId = createRequestId();
+    const exporterId = message.exporterId || panelState.selectedFormatterId;
+    const analyzerId = message.analyzerId || panelState.selectedAnalyzerId;
+    const exporter = resolveReadyEntry(state.exporterRegistry, exporterId, 'formatter');
+    const analyzer = resolveReadyEntry(state.analyzerRegistry, analyzerId, 'analyzer');
+    const { target, context } = getTargetAndContextForPanelArtifact(panelState);
+    const source = buildSourceFromTarget(target, exporter, analyzer);
+    setGlobalTask({
+        id: taskId,
+        kind: 'analysis',
+        status: 'running',
+        message: 'Running analysis...',
+        startedAt: new Date().toISOString(),
+        sourcePanelId: panelState.id,
+        process: null,
+        cancelRequested: false
+    });
+    updateAiState(analysisStarted(source));
+    updatePanelTask(panelState, {
+        status: 'running',
+        stage: 'AI Analysis',
+        message: 'Running analysis...',
+        startedAt: new Date().toISOString(),
+        cancellable: true,
+        busy: true
+    });
+    await focusAiView(false);
+    let exportedText = '';
+    let failedStage = 'exporter';
+    try {
+        const exportResult = await runTool(exporter, JSON.stringify(context, null, 2), {
+            kind: 'exporter',
+            label: 'Exporter',
+            onProcess: (child) => {
+                attachGlobalTaskProcess(taskId, child);
+            }
+        });
+        exportedText = exportResult.stdout;
+        failedStage = 'analyzer';
+        const analysisResult = await runTool(analyzer, exportedText, {
+            kind: 'analyzer',
+            label: 'Analyzer',
+            onProcess: (child) => {
+                attachGlobalTaskProcess(taskId, child);
+            }
+        });
+        updateAiState(analysisSucceeded(source, analysisResult.stdout, new Date().toISOString()));
+        addPanelActivity(panelState, 'info', 'AI analysis completed', {
+            exporterId: exporter.id,
+            analyzerId: analyzer.id,
+            artifactId: target.artifact.id,
+            graphId: target.graph.id
+        });
+        enqueuePanelMessage(panelState, { type: 'aiAnalysisStatus', status: 'succeeded', message: 'Analysis completed.' });
+        appendLog('info', 'ai analysis completed', { exporterId: exporter.id, analyzerId: analyzer.id, artifactId: target.artifact.id, stderr: analysisResult.stderr ? analysisResult.stderr.slice(0, 500) : '' });
+    } catch (error) {
+        const wasCancelled = state.globalTask && state.globalTask.id === taskId && state.globalTask.cancelRequested;
+        updateAiState(analysisFailed(state.aiState, {
+            cancelled: wasCancelled,
+            source,
+            message: error.message,
+            stage: failedStage,
+            stderr: error.stderr || ''
+        }));
+        addPanelActivity(panelState, wasCancelled ? 'warn' : 'error', wasCancelled ? 'AI analysis cancelled' : 'AI analysis failed', {
+            exporterId: exporter.id,
+            analyzerId: analyzer.id,
+            artifactId: target.artifact.id,
+            graphId: target.graph.id,
+            stage: failedStage,
+            message: error.message
+        });
+        enqueuePanelMessage(panelState, { type: 'aiAnalysisStatus', status: wasCancelled ? 'cancelled' : 'failed', message: error.message });
+        appendLog(wasCancelled ? 'warn' : 'error', wasCancelled ? 'ai analysis cancelled' : 'ai analysis failed', { exporterId: exporter.id, analyzerId: analyzer.id, stage: failedStage, message: error.message, stderr: error.stderr });
+        if (!wasCancelled) {
+            throw error;
+        }
+    } finally {
+        clearPanelTask(panelState);
+        clearGlobalTask(taskId);
+    }
+}
+
 async function openModelInPanel(panelState, modelUri, trigger) {
     panelState.currentModelUri = modelUri;
     panelState.currentArtifactId = null;
+    panelState.currentProviderId = null;
     const fileName = path.basename(modelUri.fsPath || modelUri.path);
     panelState.panel.title = `Netron Preview: ${fileName}`;
     addPanelActivity(panelState, 'info', 'Open model requested', { file: fileName, trigger });
 
-    if (!isOnnxFileName(fileName)) {
-        return openLegacyModelInPanel(panelState, modelUri, trigger);
+    const providerResult = state.providerRegistry ? state.providerRegistry.resolve(modelUri) : { ok: false };
+    if (!providerResult.ok) {
+        appendLog('info', 'no host provider for model, using legacy Netron load', { fileName, reason: providerResult.reason });
+        return openLegacyModelInPanel(panelState, modelUri, trigger, providerResult.reason);
     }
+    const provider = providerResult.provider;
+    panelState.currentProviderId = provider.id;
 
     updatePanelTask(panelState, {
         status: 'running',
@@ -1091,7 +1925,7 @@ async function openModelInPanel(panelState, modelUri, trigger) {
         busy: true
     });
 
-    const session = await state.workbench.loadModel(modelUri, {
+    const session = await provider.loadModel(modelUri, {
         onStage: (stage, detail) => {
             updatePanelTask(panelState, { status: 'running', stage, message: fileName, cancellable: true, busy: true });
             addPanelActivity(panelState, 'info', stage, detail);
@@ -1103,14 +1937,15 @@ async function openModelInPanel(panelState, modelUri, trigger) {
     enqueuePanelMessage(panelState, {
         type: 'renderGraphSnapshot',
         sessionId: session.id,
-        model: session.snapshot,
+        model: { ...session.snapshot, sessionId: session.id },
+        provider: providerInfo(provider),
         fileName,
         filePath: modelUri.fsPath || modelUri.path
     });
-    addPanelActivity(panelState, 'info', 'Host-managed ONNX render ready', { sessionId: session.id });
+    addPanelActivity(panelState, 'info', 'Host-managed model render ready', { sessionId: session.id, providerId: provider.id });
 }
 
-async function openLegacyModelInPanel(panelState, modelUri, trigger) {
+async function openLegacyModelInPanel(panelState, modelUri, trigger, providerUnavailableReason = '') {
     const bytes = await vscode.workspace.fs.readFile(modelUri);
     const fileName = path.basename(modelUri.fsPath || modelUri.path);
     addPanelActivity(panelState, 'info', 'Legacy model load', { file: fileName, trigger, sizeBytes: bytes.byteLength });
@@ -1120,17 +1955,18 @@ async function openLegacyModelInPanel(panelState, modelUri, trigger) {
         name: fileName,
         base64: Buffer.from(bytes).toString('base64'),
         sizeBytes: bytes.byteLength,
-        sentAt: Date.now()
+        sentAt: Date.now(),
+        providerUnavailableReason: typeof providerUnavailableReason === 'string' ? providerUnavailableReason : ''
     });
 }
 
 function pushCompareState(snapshot) {
-    state.pendingCompareState = snapshot || state.workbench.getCompareState();
+    state.pendingCompareState = snapshot || getCompareState();
     flushCompareState();
 }
 
 function broadcastCompareState(snapshot) {
-    const compareState = snapshot || state.workbench.getCompareState();
+    const compareState = snapshot || getCompareState();
     pushCompareState(compareState);
     for (const panelState of state.panels.values()) {
         enqueuePanelMessage(panelState, { type: 'compareStateUpdate', state: compareState });
@@ -1204,10 +2040,6 @@ function handleNotify(message) {
     }
 }
 
-function ensureExternalData(session) {
-    return Array.from(session.graphInfo.initializers.values()).some((tensor) => tensor.dataLocation === 1 && Array.isArray(tensor.externalData) && tensor.externalData.length > 0);
-}
-
 function getDefaultFolder() {
     return vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
         ? vscode.workspace.workspaceFolders[0].uri
@@ -1234,9 +2066,20 @@ function deactivate() {
             clearTimeout(panelState.readyTimer);
         }
     }
+    if (state.exporterRegistry) {
+        state.exporterRegistry.stopWatching();
+    }
+    if (state.analyzerRegistry) {
+        state.analyzerRegistry.stopWatching();
+    }
+    cancelGlobalTask();
 }
 
 module.exports = {
     activate,
-    deactivate
+    deactivate,
+    registerFormatProvider,
+    unregisterFormatProvider,
+    getFormatProviders,
+    getFormatProviderDiagnostics
 };

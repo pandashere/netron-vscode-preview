@@ -1,0 +1,7 @@
+{
+  "id": "line-count-analysis",
+  "label": "Line Count Analysis",
+  "command": "node",
+  "args": ["line-count-analysis.js"],
+  "timeoutMs": 30000
+}

@@ -2,7 +2,7 @@
 
 ## 样本
 
-- 模型文件：`/home/zhaochen/net_vsix_min_repo/testdata/generated/vit-unet-3200.onnx`
+- 模型文件：`testdata/generated/vit-unet-3200.onnx`
 - ONNX 节点数：`3200`
 - Netron Workbench 读取节点数：`3200`
 - 边数：`3835`

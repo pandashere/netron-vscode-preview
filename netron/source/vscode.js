@@ -612,7 +612,13 @@ window.addEventListener('unhandledrejection', function(event) {
                 });
 
                 if (status === '' || status === 'context-open-attachment') {
-                    this._window.dispatchEvent(new this._window.CustomEvent('nnjs:model-opened'));
+                    this._window.dispatchEvent(new this._window.CustomEvent('nnjs:model-opened', {
+                        detail: {
+                            providerUnavailableReason: typeof payload.providerUnavailableReason === 'string'
+                                ? payload.providerUnavailableReason
+                                : ''
+                        }
+                    }));
                     this._post({
                         type: 'modelOpened',
                         requestId,

@@ -1,0 +1,49 @@
+{
+  "kind": "netron-dev-ir",
+  "formatId": "dev-ir-a",
+  "label": "Dev IR Model A",
+  "graph": {
+    "id": "dev-ir-a:sample",
+    "name": "Dev IR A Sample",
+    "inputs": ["image_a"],
+    "outputs": ["logits_a"],
+    "nodes": [
+      {
+        "id": "a-conv",
+        "name": "A_Conv",
+        "type": "Conv",
+        "domain": "dev.ir",
+        "inputs": [
+          { "name": "X", "tensor": "image_a" },
+          { "name": "W", "tensor": "a_weight" }
+        ],
+        "outputs": [{ "name": "Y", "tensor": "a_hidden" }],
+        "attributes": { "kernel": [3, 3], "stride": [1, 1] }
+      },
+      {
+        "id": "a-head",
+        "name": "A_Head",
+        "type": "Linear",
+        "domain": "dev.ir",
+        "inputs": [{ "name": "X", "tensor": "a_hidden" }],
+        "outputs": [{ "name": "Y", "tensor": "logits_a" }],
+        "attributes": { "classes": 4 }
+      }
+    ],
+    "tensors": [
+      { "name": "image_a", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 3, 8, 8], "kind": "input" },
+      { "name": "a_weight", "dtype": "float32", "rawDtype": "FLOAT", "shape": [4, 3, 3, 3], "kind": "initializer" },
+      { "name": "a_hidden", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 4, 6, 6], "kind": "activation" },
+      { "name": "logits_a", "dtype": "float32", "rawDtype": "FLOAT", "shape": [1, 4], "kind": "output" }
+    ]
+  },
+  "runtime": {
+    "seed": 101,
+    "outputs": {
+      "logits_a": {
+        "scale": 1,
+        "offset": 0
+      }
+    }
+  }
+}

@@ -4,6 +4,16 @@
 
 - Install the packaged VSIX.
 - Open a workspace folder.
+- Install sample exporter/analyzer tools when checking text export or AI analysis:
+
+```bash
+npm run qa:install-ai-tools
+```
+
+- The tool registry roots are global to the VS Code extension host:
+  - exporters: `~/.netron/vscode-preview/exporters`
+  - analyzers: `~/.netron/vscode-preview/analyzers`
+- In Remote SSH, WSL, or container sessions, `~` is resolved in the remote extension-host environment, not on the local desktop.
 - Generate offline fixtures when needed:
 
 ```bash
@@ -45,7 +55,30 @@ Recommended fixtures:
 - Reopen the exported ONNX in a fresh Netron tab.
 - Verify the exported graph loads and shows only the cropped subgraph.
 
-## 4. Single-Model Inference
+## 4. Scriptable Text Export
+
+- Reconfirm a crop.
+- In the Crop tab, select `Crop JSON Summary` in the Text Export exporter dropdown.
+- Verify unavailable entries, if any, are disabled and can expose details from the small disclosure arrow.
+- Click `Copy Export Text`.
+- Paste the clipboard into a scratch editor.
+- Verify the copied text includes model, artifact, graph, input, output, node count, and tensor count lines.
+- Temporarily break the selected exporter's manifest, for example by removing `command`, and verify `Copy Export Text` is disabled with a visible unavailable reason.
+- Restore the manifest and verify the dropdown returns to a ready state after refresh.
+
+## 5. AI Analysis Panel
+
+- Reconfirm a crop.
+- In the AI tab, select `Crop JSON Summary` as Formatter and `Line Count Analysis` as Analyzer.
+- Click `Analyze`.
+- Verify the global `AI Analysis` panel opens or focuses.
+- Verify the panel shows status metadata and the analyzer result as plain text.
+- Verify the AI tab itself shows task status only, not the full analyzer result.
+- Verify the result can be copied from the AI panel.
+- Start a long-running analyzer variant and verify Cancel is available from both the AI tab and AI panel.
+- Verify `Analyze` reruns formatter and analyzer each time, rather than reusing old output.
+
+## 6. Single-Model Inference
 
 - On a confirmed crop, use `Run` tab.
 - Run with `Auto / zeros`.
@@ -55,7 +88,7 @@ Recommended fixtures:
 - Import a `.npz` input and run again.
 - Verify result table appears with output name, dtype, shape, and summary stats.
 
-## 5. Compare With Non-Isomorphic Subgraphs
+## 7. Compare With Non-Isomorphic Subgraphs
 
 - Open `dual-io-compare-a.onnx` in one tab.
 - Open `dual-io-compare-b.onnx` in another tab.
@@ -68,7 +101,7 @@ Recommended fixtures:
 - Run compare with `Auto / ones`.
 - Verify the result table is produced from output bindings, not graph topology.
 
-## 6. Compare Binding Behavior
+## 8. Compare Binding Behavior
 
 - Use a pair of crops whose port names differ but shapes and dtypes are compatible.
 - Verify binding rows appear in the bottom `Netron Compare` panel.
@@ -76,7 +109,7 @@ Recommended fixtures:
 - Run compare.
 - Verify compare uses the manual mapping successfully.
 
-## 7. Large ONNX Load Behavior
+## 9. Large ONNX Load Behavior
 
 - Open `large-matmul-singlefile.onnx`.
 - Verify the model opens through the host-managed path.
@@ -85,7 +118,7 @@ Recommended fixtures:
 - Repeat with `large-matmul-external-data.onnx`.
 - Confirm crop export still works for the external-data source.
 
-## 8. Compare Panel Persistence Semantics
+## 10. Compare Panel Persistence Semantics
 
 - Put a confirmed crop into slot A.
 - Close the source model tab.
@@ -94,7 +127,7 @@ Recommended fixtures:
 - Run `Netron: Clear Compare`.
 - Verify the slots are emptied.
 
-## 9. Busy-State / Anti-Misclick Checks
+## 11. Busy-State / Anti-Misclick Checks
 
 - Start a long-running action.
 - Verify the related buttons are disabled while busy.
@@ -102,7 +135,7 @@ Recommended fixtures:
 - Click `Cancel`.
 - Verify the UI reflects cancellation request and avoids applying stale follow-up actions.
 
-## 10. Packaging Sanity
+## 12. Packaging Sanity
 
 - Verify the packaged VSIX installs successfully.
 - Verify Linux x64 runtime works in the local environment.

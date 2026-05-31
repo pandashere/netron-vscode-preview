@@ -1,0 +1,7 @@
+{
+  "id": "graph-edge-list",
+  "label": "Graph Edge List",
+  "command": "node",
+  "args": ["graph-edge-list.js"],
+  "timeoutMs": 30000
+}

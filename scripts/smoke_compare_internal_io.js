@@ -50,6 +50,15 @@ async function main() {
     assertTensorPort(artifactA.ioSignature.outputs[0], 'shared_out');
     assertTensorPort(artifactB.ioSignature.outputs[0], 'shared_out');
 
+    const compareSlotA = workbench.getCompareSlot(artifactA.id);
+    if (compareSlotA.providerId !== 'onnx' || compareSlotA.artifactId !== artifactA.id) {
+        throw new Error(`Unexpected compare slot metadata: ${JSON.stringify(compareSlotA)}.`);
+    }
+    const emptyState = workbench.getCompareState();
+    if (emptyState.slotA || emptyState.slotB) {
+        throw new Error('getCompareSlot() should not mutate compare state.');
+    }
+
     workbench.assignCompareSlot('A', artifactA.id);
     workbench.assignCompareSlot('B', artifactB.id);
     const state = workbench.getCompareState();

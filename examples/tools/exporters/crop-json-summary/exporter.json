@@ -1,0 +1,7 @@
+{
+  "id": "crop-json-summary",
+  "label": "Crop JSON Summary",
+  "command": "node",
+  "args": ["crop-json-summary.js"],
+  "timeoutMs": 30000
+}
