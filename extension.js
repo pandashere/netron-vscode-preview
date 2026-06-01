@@ -1755,6 +1755,38 @@ function getTargetAndContextForPanelArtifact(panelState) {
     return { target, context };
 }
 
+function normalizeAnalyzerUserInputs(analyzer, rawInputs) {
+    const definitions = analyzer && Array.isArray(analyzer.userInputs) ? analyzer.userInputs.slice(0, 3) : [];
+    const source = rawInputs && typeof rawInputs === 'object' && !Array.isArray(rawInputs) ? rawInputs : {};
+    const result = {};
+    for (const definition of definitions) {
+        if (!definition || !definition.id) {
+            continue;
+        }
+        const value = source[definition.id] === undefined || source[definition.id] === null
+            ? ''
+            : String(source[definition.id]);
+        if (definition.required && value.trim().length === 0) {
+            throw new Error(`Analyzer input '${definition.label || definition.id}' is required.`);
+        }
+        result[definition.id] = value;
+    }
+    return result;
+}
+
+function buildAnalyzerStdin(analyzer, exportedText, userInputs) {
+    const definitions = analyzer && Array.isArray(analyzer.userInputs) ? analyzer.userInputs : [];
+    if (definitions.length === 0) {
+        return exportedText;
+    }
+    return JSON.stringify({
+        kind: 'netron-analyzer-input',
+        schemaVersion: 1,
+        exportedText,
+        userInputs
+    }, null, 2);
+}
+
 async function handleCopyExportText(panelState, message) {
     if (state.globalTask) {
         throw new Error('Another export/analysis task is running.');
@@ -1822,6 +1854,7 @@ async function handleRunAiAnalysis(panelState, message) {
     const analyzerId = message.analyzerId || panelState.selectedAnalyzerId;
     const exporter = resolveReadyEntry(state.exporterRegistry, exporterId, 'formatter');
     const analyzer = resolveReadyEntry(state.analyzerRegistry, analyzerId, 'analyzer');
+    const analyzerInputs = normalizeAnalyzerUserInputs(analyzer, message.analyzerInputs);
     const { target, context } = getTargetAndContextForPanelArtifact(panelState);
     const source = buildSourceFromTarget(target, exporter, analyzer);
     setGlobalTask({
@@ -1856,7 +1889,7 @@ async function handleRunAiAnalysis(panelState, message) {
         });
         exportedText = exportResult.stdout;
         failedStage = 'analyzer';
-        const analysisResult = await runTool(analyzer, exportedText, {
+        const analysisResult = await runTool(analyzer, buildAnalyzerStdin(analyzer, exportedText, analyzerInputs), {
             kind: 'analyzer',
             label: 'Analyzer',
             onProcess: (child) => {

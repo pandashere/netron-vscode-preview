@@ -46,6 +46,7 @@
     "smoke:ai-task-host-flow": "node scripts/smoke_ai_task_host_flow.js",
     "smoke:core-text-export-context": "node scripts/smoke_core_text_export_context.js",
     "smoke:text-export-context": "node scripts/smoke_text_export_context.js",
+    "smoke:onnx-constant-crop": "node scripts/smoke_onnx_constant_crop.js",
     "smoke:cli-tools": "node scripts/smoke_cli_tools.js",
     "smoke:provider-registry": "node scripts/smoke_provider_registry.js",
     "smoke:private-ir-guide-examples": "node scripts/smoke_private_ir_guide_examples.js"

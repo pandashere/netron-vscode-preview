@@ -99,7 +99,7 @@ function delay(ms = 0) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function writeTool(kind, name, script, timeoutMs = 5000) {
+function writeTool(kind, name, script, timeoutMs = 5000, manifestOverrides = {}) {
     const dir = path.join(tempHome, '.netron', 'vscode-preview', `${kind}s`, name);
     fs.mkdirSync(dir, { recursive: true });
     const scriptPath = path.join(dir, `${name}.js`);
@@ -109,12 +109,14 @@ function writeTool(kind, name, script, timeoutMs = 5000) {
         label: name,
         command: process.execPath,
         args: [scriptPath],
-        timeoutMs
+        timeoutMs,
+        ...manifestOverrides
     };
     fs.writeFileSync(path.join(dir, `${kind}.json`), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 function installTools() {
+    const promptCapturePath = path.join(tempHome, 'prompt-analyzer-input.json');
     writeTool('exporter', 'echo-context', `
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -132,6 +134,35 @@ process.stdin.on('end', () => {
   setTimeout(() => process.stdout.write('analysis complete\\n'), 2000);
 });
 `, 10000);
+    writeTool('analyzer', 'prompt-analyzer', `
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => input += chunk);
+process.stdin.on('end', () => {
+  require('fs').writeFileSync(process.env.PROMPT_CAPTURE_PATH, input);
+  const payload = JSON.parse(input);
+  process.stdout.write([
+    payload.kind,
+    payload.exportedText.trim(),
+    payload.userInputs.focus
+  ].join('\\n'));
+});
+`, 5000, {
+        description: 'Prompt analyzer description.',
+        env: {
+            PROMPT_CAPTURE_PATH: promptCapturePath
+        },
+        userInputs: [
+            {
+                id: 'focus',
+                label: 'Focus',
+                placeholder: 'Focus area',
+                required: true,
+                multiline: true
+            }
+        ]
+    });
+    return { promptCapturePath };
 }
 
 async function waitFor(predicate, message, timeoutMs = 3000) {
@@ -172,7 +203,7 @@ async function runAndCancelAnalysis({ panel, cropMessage, clipboardWrites, cance
 }
 
 async function main() {
-    installTools();
+    const toolPaths = installTools();
     const createdPanels = [];
     const registered = [];
     const registeredViews = new Map();
@@ -274,6 +305,20 @@ async function main() {
         await waitFor(() => panel.webview.posted.find((message) => message.type === 'renderGraphSnapshot'), 'Model did not render.');
         await panel.webview._handler({ type: 'confirmCrop', startKeys: ['x'], endKeys: ['y'] });
         const cropMessage = await waitFor(() => panel.webview.posted.find((message) => message.type === 'cropConfirmed'), 'Crop did not confirm.');
+
+        await panel.webview._handler({
+            type: 'runAiAnalysis',
+            artifactId: cropMessage.artifact.id,
+            exporterId: 'echo-context',
+            analyzerId: 'prompt-analyzer',
+            analyzerInputs: { focus: 'check constants' }
+        });
+        const promptSucceeded = await waitFor(() => panel.webview.posted.find((message) => message.type === 'aiAnalysisStatus' && message.status === 'succeeded'), 'Prompt analysis did not complete.');
+        assert(promptSucceeded, 'Prompt analysis should report success.');
+        const promptPayload = JSON.parse(fs.readFileSync(toolPaths.promptCapturePath, 'utf8'));
+        assert(promptPayload.kind === 'netron-analyzer-input', 'Prompt analyzer should receive JSON envelope.');
+        assert(/artifact=/.test(promptPayload.exportedText), 'Prompt analyzer envelope should include exported text.');
+        assert(promptPayload.userInputs.focus === 'check constants', 'Prompt analyzer envelope should include user input.');
 
         await runAndCancelAnalysis({
             panel,

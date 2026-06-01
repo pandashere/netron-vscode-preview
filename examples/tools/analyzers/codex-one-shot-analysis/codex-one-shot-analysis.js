@@ -74,7 +74,24 @@ function parseExtraArgs(value) {
   return result;
 }
 
-function buildPrompt(graphText) {
+function parseAnalyzerInput(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && parsed.kind === 'netron-analyzer-input') {
+      return {
+        graphText: String(parsed.exportedText || ''),
+        userInputs: parsed.userInputs && typeof parsed.userInputs === 'object' && !Array.isArray(parsed.userInputs)
+          ? parsed.userInputs
+          : {}
+      };
+    }
+  } catch {
+    // Backward compatibility: old analyzers received plain exported text.
+  }
+  return { graphText: text, userInputs: {} };
+}
+
+function buildPrompt(graphText, userInputs = {}) {
   const prompt = process.env.CODEX_ANALYSIS_PROMPT && process.env.CODEX_ANALYSIS_PROMPT.trim()
     ? process.env.CODEX_ANALYSIS_PROMPT.trim()
     : [
@@ -88,8 +105,16 @@ function buildPrompt(graphText) {
         '4. 可能影响裁剪、推理或跨格式 compare 的风险。',
         '5. 下一步建议。'
       ].join('\n');
+  const userLines = [];
+  if (userInputs.focus && String(userInputs.focus).trim()) {
+    userLines.push('用户关注点：', String(userInputs.focus).trim());
+  }
+  if (userInputs.question && String(userInputs.question).trim()) {
+    userLines.push('用户问题：', String(userInputs.question).trim());
+  }
   return [
     prompt,
+    userLines.length > 0 ? userLines.join('\n') : '',
     '',
     '<graph-text>',
     graphText.trim(),
@@ -185,11 +210,12 @@ function runCodex(prompt) {
 }
 
 async function main() {
-  const graphText = await readStdin();
+  const input = parseAnalyzerInput(await readStdin());
+  const graphText = input.graphText;
   if (!graphText.trim()) {
     throw new Error('Analyzer input is empty.');
   }
-  const result = await runCodex(buildPrompt(graphText));
+  const result = await runCodex(buildPrompt(graphText, input.userInputs));
   process.stdout.write(result);
 }
 

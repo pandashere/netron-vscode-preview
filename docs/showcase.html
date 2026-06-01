@@ -1322,7 +1322,7 @@
             <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/><circle cx="12" cy="12" r="5"/></svg></div>
             <h3>脚本化 AI 分析</h3>
             <p>AI 面板不绑定某一个模型服务，也不是一个通用聊天框。它先让 exporter 把 crop 转成文本，再交给 analyzer 脚本决定怎么分析。</p>
-            <ul><li>exporter 可以输出 edge list、JSON summary 或客户自定义文本格式。</li><li>analyzer 可以调用私有模型、DeepSeek、内部 agent CLI，或任何一次性 message 模式工具。</li><li>工具从全局目录热加载，UI 会展示是否可用以及不可用原因。</li></ul>
+            <ul><li>exporter 可以输出 edge list、JSON summary 或客户自定义文本格式。</li><li>analyzer 可以声明描述和最多 3 个用户输入框，用来把用户关注点和系统上下文拼成 prompt。</li><li>analyzer 可以调用私有模型、DeepSeek、内部 agent CLI，或任何一次性 message 模式工具。</li><li>工具从全局目录热加载，UI 会展示是否可用以及不可用原因。</li></ul>
           </article>
         </div>
       </div>
@@ -1407,15 +1407,16 @@ smoke all ok</pre>
             <div class="script-row"><div><strong>graph-edge-list</strong><span>把 crop graph 转成边列表文本，适合给 LLM 或 agent。</span></div><code>exporter</code></div>
             <div class="script-row"><div><strong>line-count-analysis</strong><span>最小 analyzer 示例，用于验证管线。</span></div><code>analyzer</code></div>
             <div class="script-row"><div><strong>deepseek-graph-analysis</strong><span>脱敏示例，通过环境变量或 secret file 读取 key。</span></div><code>analyzer</code></div>
-            <div class="script-row"><div><strong>codex-one-shot-analysis</strong><span>包装 codex exec，一次性读取 graph text 并返回分析结果。</span></div><code>analyzer</code></div>
+            <div class="script-row"><div><strong>deepseek-prompt-template-analysis</strong><span>真实调用 DeepSeek，把图文本、用户输入和注意事项拼成固定 prompt。</span></div><code>analyzer</code></div>
+            <div class="script-row"><div><strong>codex-one-shot-analysis</strong><span>包装 codex exec，可接收用户关注点后拼接 prompt 并返回分析结果。</span></div><code>analyzer</code></div>
           </div>
 
           <div class="analysis-card reveal">
             <div class="board-title"><strong>AI Analysis</strong><span>display-only panel</span></div>
             <div class="analysis-body">
               <h3>由客户脚本决定上下文和分析逻辑。</h3>
-              <p>核心只负责把 confirmed crop 的结构化文本交给脚本，运行状态、取消、错误原因和结果展示由扩展统一管理。</p>
-              <div class="quote">输入是 Netron crop 图的 edge-list 文本。请分析主干路径、分支/汇合、输入输出、可疑断点、可并行区域，以及后续推理/裁剪/比较建议。</div>
+              <p>核心只负责把 confirmed crop 的结构化文本和最多 3 个用户输入交给脚本，运行状态、取消、错误原因和结果展示由扩展统一管理。</p>
+              <div class="quote">你是一个图分析专家。现在我们有如下图结构；用户给出如下输入；注意事项如下。请结合图结构分析用户输入，并按要求完成图分析。</div>
             </div>
           </div>
         </div>

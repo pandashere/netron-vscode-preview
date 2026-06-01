@@ -28,7 +28,9 @@ function main() {
         'wb-cancel-ai',
         'wb-ai-status',
         'wb-formatter-details',
-        'wb-analyzer-details'
+        'wb-analyzer-details',
+        'wb-analyzer-description',
+        'wb-analyzer-inputs'
     ]) {
         includes(workbenchUi, `#${id}`, `UI selector ${id}`);
     }
@@ -79,6 +81,8 @@ function main() {
         '_resolveToolSelection',
         '_renderToolSelect',
         '_renderDetails',
+        '_renderAnalyzerInputControls',
+        '_collectAnalyzerInputs',
         '_renderAiStatus',
         '_providerSupports',
         '_capabilityReason'
@@ -97,12 +101,18 @@ function main() {
     includes(workbenchUi, "const lines = [entry.reason || 'Unavailable'].concat(Array.isArray(entry.details) ? entry.details : [])", 'current item detail lines');
     includes(workbenchUi, "panel.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')", 'current item details only');
     includes(workbenchUi, 'wb-spinner', 'Model Tools running spinner');
+    includes(workbenchUi, 'data-input-id', 'analyzer user input fields');
+    includes(workbenchUi, 'analyzerInputs: this._collectAnalyzerInputs()', 'UI posts analyzer user inputs');
+    includes(workbenchUi, 'isEditableTarget', 'editable target helper');
+    includes(workbenchUi, "event.key === 'Backspace' && isEditableTarget(event.target)", 'workbench editable Backspace isolation');
     includes(workbenchUi, '_setButtonRunning', 'running action button renderer');
     includes(workbenchUi, '_renderStatusLine', 'running status line renderer');
     includes(workbenchUi, "globalTask && globalTask.kind === 'copy-export'", 'Copy Export running state');
     includes(workbenchUi, "globalTask && globalTask.kind === 'analysis'", 'AI analysis running state');
     includes(extension, '.spinner { width: 12px;', 'AI panel running spinner CSS');
     includes(extension, "status === 'running'", 'AI panel running status rendering');
+    includes(extension, "kind: 'netron-analyzer-input'", 'analyzer user-input envelope');
+    includes(extension, 'normalizeAnalyzerUserInputs', 'analyzer user-input host normalization');
     includes(workbenchUi, "textExportReason || targetReason || taskReason || this._toolReason(exporter, 'No exporters found.')", 'exporter availability reason priority');
     includes(workbenchUi, "textExportReason || targetReason || taskReason || this._toolReason(analyzer, 'No analyzers found.')", 'analyzer availability reason priority');
     includes(extension, 'providerUnavailableReason: typeof providerUnavailableReason === \'string\' ? providerUnavailableReason : \'\'', 'legacy load carries provider unavailable reason');

@@ -179,8 +179,18 @@ async function main() {
             writeToolManifest(analyzerRoot, 'analyzer', 'ok', {
                 id: 'ok',
                 label: 'OK Analyzer',
+                description: 'Analyzer with user prompt fields.',
                 command: '/bin/cat',
-                args: []
+                args: [],
+                userInputs: [
+                    {
+                        id: 'focus',
+                        label: 'Focus',
+                        placeholder: 'What should the analyzer focus on?',
+                        required: true,
+                        multiline: true
+                    }
+                ]
             });
             writeToolManifest(analyzerRoot, 'analyzer', 'dup-a', {
                 id: 'dup',
@@ -200,8 +210,25 @@ async function main() {
                 defaultTimeoutMs: 1000
             });
             const analyzers = analyzerRegistry.refresh();
-            assert(analyzers.entries.some((entry) => entry.id === 'ok' && entry.status === 'ready'), 'Ready analyzer missing.');
+            const okAnalyzer = analyzers.entries.find((entry) => entry.id === 'ok' && entry.status === 'ready');
+            assert(okAnalyzer, 'Ready analyzer missing.');
+            assert(okAnalyzer.description === 'Analyzer with user prompt fields.', 'Analyzer description should be public.');
+            assert(okAnalyzer.userInputs.length === 1 && okAnalyzer.userInputs[0].id === 'focus' && okAnalyzer.userInputs[0].required === true, 'Analyzer userInputs should be public.');
             assert(analyzers.entries.filter((entry) => entry.id === 'dup' && entry.status === 'error').length === 2, 'Duplicate analyzers should both be disabled.');
+            writeToolManifest(analyzerRoot, 'analyzer', 'too-many-inputs', {
+                id: 'too-many-inputs',
+                label: 'Too Many Inputs',
+                command: '/bin/cat',
+                args: [],
+                userInputs: [
+                    { id: 'a', label: 'A' },
+                    { id: 'b', label: 'B' },
+                    { id: 'c', label: 'C' },
+                    { id: 'd', label: 'D' }
+                ]
+            });
+            const invalidInputs = analyzerRegistry.refresh().entries.find((entry) => entry.id === 'too-many-inputs');
+            assert(invalidInputs && invalidInputs.status === 'error' && /at most 3/.test(invalidInputs.reason), 'Analyzer with more than 3 userInputs should be invalid.');
         } finally {
             fs.rmSync(analyzerRoot, { recursive: true, force: true });
         }

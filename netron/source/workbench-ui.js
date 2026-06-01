@@ -19,6 +19,14 @@ const escapeHtml = (value) => String(value ?? '')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+const isEditableTarget = (target) => {
+    if (!target || !target.tagName) {
+        return false;
+    }
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'textarea' || tagName === 'input' || target.isContentEditable;
+};
+
 class TensorShape {
     constructor(dimensions) {
         this.dimensions = Array.isArray(dimensions) ? dimensions.slice() : [];
@@ -210,6 +218,7 @@ export class ONNXWorkbenchUI {
         this.selectedExporterId = null;
         this.selectedFormatterId = null;
         this.selectedAnalyzerId = null;
+        this.analyzerInputValues = {};
         this.exporterDetailsOpen = false;
         this.formatterDetailsOpen = false;
         this.analyzerDetailsOpen = false;
@@ -283,6 +292,11 @@ export class ONNXWorkbenchUI {
         #onnx-workbench .wb-task-title { display: inline-flex; align-items: center; gap: 6px; }
         #onnx-workbench .wb-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
         #onnx-workbench textarea { width: 100%; min-height: 66px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.25); background: rgba(255,255,255,0.9); color: inherit; padding: 8px; box-sizing: border-box; }
+        #onnx-workbench input.wb-text-input { width: 100%; border-radius: 8px; border: 1px solid rgba(127,127,127,0.25); background: rgba(255,255,255,0.9); color: inherit; padding: 7px 8px; box-sizing: border-box; }
+        #onnx-workbench .wb-analyzer-prompt { display: grid; gap: 8px; margin-top: 10px; }
+        #onnx-workbench .wb-analyzer-input { display: grid; gap: 4px; }
+        #onnx-workbench .wb-analyzer-input label { font-size: 12px; font-weight: 650; }
+        #onnx-workbench .wb-required { color: #b26a00; }
         #onnx-workbench .wb-result-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         #onnx-workbench .wb-result-table th, #onnx-workbench .wb-result-table td { border-top: 1px solid rgba(127,127,127,0.18); padding: 6px; text-align: left; vertical-align: top; }
         #onnx-workbench .wb-detail-toggle { width: 24px; min-width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-color: transparent; background: transparent; border-radius: 6px; color: inherit; opacity: 0.38; font-size: 13px; line-height: 1; }
@@ -302,7 +316,7 @@ export class ONNXWorkbenchUI {
             #onnx-workbench-bar .wb-bar-pill { background: rgba(31,111,235,0.12); border-color: rgba(255,255,255,0.08); }
             #onnx-workbench { background: rgba(36,39,46,0.98); color: #e6edf3; border-color: rgba(255,255,255,0.08); }
             #onnx-workbench .wb-header, #onnx-workbench .wb-status { background: rgba(45,49,57,0.92); }
-            #onnx-workbench .wb-tab, #onnx-workbench button, #onnx-workbench textarea, #onnx-workbench select { background: #22262e; color: #e6edf3; border-color: rgba(255,255,255,0.12); }
+            #onnx-workbench .wb-tab, #onnx-workbench button, #onnx-workbench textarea, #onnx-workbench input.wb-text-input, #onnx-workbench select { background: #22262e; color: #e6edf3; border-color: rgba(255,255,255,0.12); }
             #onnx-workbench .wb-task { background: rgba(31,111,235,0.10); }
         }
         @media (max-width: 900px) {
@@ -479,6 +493,8 @@ export class ONNXWorkbenchUI {
                     </div>
                     <div id="wb-analyzer-reason" class="wb-muted"></div>
                     <div id="wb-analyzer-details-panel" class="wb-muted" style="display:none;"></div>
+                    <div id="wb-analyzer-description" class="wb-muted" style="display:none;"></div>
+                    <div id="wb-analyzer-inputs" class="wb-analyzer-prompt" style="display:none;"></div>
                 </div>
                 <div class="wb-row">
                     <button id="wb-run-ai" class="primary" disabled>Analyze</button>
@@ -539,6 +555,8 @@ export class ONNXWorkbenchUI {
         this._elements.analyzerDetails = root.querySelector('#wb-analyzer-details');
         this._elements.analyzerReason = root.querySelector('#wb-analyzer-reason');
         this._elements.analyzerDetailsPanel = root.querySelector('#wb-analyzer-details-panel');
+        this._elements.analyzerDescription = root.querySelector('#wb-analyzer-description');
+        this._elements.analyzerInputs = root.querySelector('#wb-analyzer-inputs');
         this._elements.runAi = root.querySelector('#wb-run-ai');
         this._elements.cancelAi = root.querySelector('#wb-cancel-ai');
         this._elements.aiStatus = root.querySelector('#wb-ai-status');
@@ -840,6 +858,16 @@ export class ONNXWorkbenchUI {
             this.host._post({ type: 'selectAnalyzer', id: this.selectedAnalyzerId });
             this._renderToolControls();
         });
+        this._elements.analyzerInputs.addEventListener('input', (event) => {
+            const target = event.target;
+            if (!target || !target.getAttribute) {
+                return;
+            }
+            const id = target.getAttribute('data-input-id');
+            if (id) {
+                this.analyzerInputValues[id] = target.value || '';
+            }
+        });
         this._elements.analyzerDetails.addEventListener('click', () => {
             this.analyzerDetailsOpen = !this.analyzerDetailsOpen;
             this._renderToolControls();
@@ -852,13 +880,19 @@ export class ONNXWorkbenchUI {
                 type: 'runAiAnalysis',
                 artifactId: this.confirmedArtifact.id,
                 exporterId: this._elements.aiFormatter.value || null,
-                analyzerId: this._elements.aiAnalyzer.value || null
+                analyzerId: this._elements.aiAnalyzer.value || null,
+                analyzerInputs: this._collectAnalyzerInputs()
             });
         });
         this._elements.cancelAi.addEventListener('click', () => {
             this.host._post({ type: 'cancelAiTask' });
         });
         this._elements.selectionBar.addEventListener('click', (event) => event.stopPropagation());
+        this._elements.root.addEventListener('keydown', (event) => {
+            if (event.key === 'Backspace' && isEditableTarget(event.target)) {
+                event.stopPropagation();
+            }
+        });
         this._elements.root.addEventListener('click', (event) => event.stopPropagation());
         this.host.document.addEventListener('click', (event) => this._handleGraphClick(event), true);
         this.host.document.addEventListener('keydown', (event) => {
@@ -1524,6 +1558,61 @@ export class ONNXWorkbenchUI {
         panel.innerHTML = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('');
     }
 
+    _analyzerUserInputs(analyzer) {
+        return analyzer && Array.isArray(analyzer.userInputs) ? analyzer.userInputs.slice(0, 3) : [];
+    }
+
+    _collectAnalyzerInputs() {
+        const analyzer = this._resolveToolSelection('analyzers', this.selectedAnalyzerId);
+        const result = {};
+        for (const input of this._analyzerUserInputs(analyzer)) {
+            if (!input || !input.id) {
+                continue;
+            }
+            const element = this._elements.analyzerInputs
+                ? Array.from(this._elements.analyzerInputs.querySelectorAll('[data-input-id]')).find((item) => item.getAttribute('data-input-id') === input.id)
+                : null;
+            result[input.id] = element ? (element.value || '') : (this.analyzerInputValues[input.id] || '');
+        }
+        return result;
+    }
+
+    _renderAnalyzerInputControls(analyzer) {
+        const description = analyzer && typeof analyzer.description === 'string' ? analyzer.description.trim() : '';
+        const inputs = this._analyzerUserInputs(analyzer);
+        if (this._elements.analyzerDescription) {
+            this._elements.analyzerDescription.style.display = description ? 'block' : 'none';
+            this._elements.analyzerDescription.textContent = description;
+        }
+        if (!this._elements.analyzerInputs) {
+            return;
+        }
+        if (inputs.length === 0) {
+            this._elements.analyzerInputs.style.display = 'none';
+            this._elements.analyzerInputs.innerHTML = '';
+            return;
+        }
+        this._elements.analyzerInputs.style.display = 'grid';
+        this._elements.analyzerInputs.innerHTML = inputs.map((input) => {
+            const id = String(input.id || '');
+            const label = input.label || id;
+            const descriptionText = input.description || '';
+            const placeholder = input.placeholder || '';
+            const value = this.analyzerInputValues[id] || '';
+            const required = input.required ? ' <span class="wb-required">*</span>' : '';
+            const field = input.multiline === false
+                ? `<input class="wb-text-input" data-input-id="${escapeHtml(id)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">`
+                : `<textarea data-input-id="${escapeHtml(id)}" placeholder="${escapeHtml(placeholder)}">${escapeHtml(value)}</textarea>`;
+            return [
+                '<div class="wb-analyzer-input">',
+                `<label>${escapeHtml(label)}${required}</label>`,
+                descriptionText ? `<div class="wb-muted">${escapeHtml(descriptionText)}</div>` : '',
+                field,
+                '</div>'
+            ].join('');
+        }).join('');
+    }
+
     _setButtonRunning(button, label, running) {
         if (!button) {
             return;
@@ -1579,6 +1668,7 @@ export class ONNXWorkbenchUI {
         this._renderDetails(this._elements.exporterDetails, this._elements.exporterDetailsPanel, exporter, this.exporterDetailsOpen);
         this._renderDetails(this._elements.formatterDetails, this._elements.formatterDetailsPanel, formatter, this.formatterDetailsOpen);
         this._renderDetails(this._elements.analyzerDetails, this._elements.analyzerDetailsPanel, analyzer, this.analyzerDetailsOpen);
+        this._renderAnalyzerInputControls(analyzer);
         if (!this.confirmedArtifact) {
             this._elements.aiTarget.textContent = '(no confirmed crop)';
         } else {

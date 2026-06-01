@@ -27,6 +27,7 @@ const checks = [
     ['ai-task-host-flow', ['scripts/smoke_ai_task_host_flow.js']],
     ['core-text-export-context', ['scripts/smoke_core_text_export_context.js']],
     ['text-export-context', ['scripts/smoke_text_export_context.js']],
+    ['onnx-constant-crop', ['scripts/smoke_onnx_constant_crop.js']],
     ['compare-core', ['scripts/smoke_compare_core.js']],
     ['host-compare-state', ['scripts/smoke_host_compare_state.js']],
     ['compare-engine', ['scripts/smoke_compare_engine.js']],

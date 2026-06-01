@@ -1,0 +1,30 @@
+{
+  "id": "deepseek-prompt-template-analysis",
+  "label": "DeepSeek Prompt Template Analysis",
+  "description": "A minimal DeepSeek analyzer that combines exported graph text with two user prompt fields.",
+  "command": "node",
+  "args": ["deepseek-prompt-template-analysis.js"],
+  "timeoutMs": 180000,
+  "env": {
+    "DEEPSEEK_MODEL": "deepseek-chat",
+    "DEEPSEEK_BASE_URL": "https://api.deepseek.com"
+  },
+  "userInputs": [
+    {
+      "id": "input1",
+      "label": "用户输入",
+      "placeholder": "例如：重点检查 Conv 后处理链路是否存在异常。",
+      "description": "会作为用户分析目标拼接进 prompt。",
+      "required": false,
+      "multiline": true
+    },
+    {
+      "id": "input2",
+      "label": "注意事项",
+      "placeholder": "例如：忽略权重初始化节点，重点关注推理路径。",
+      "description": "会作为额外约束拼接进 prompt。",
+      "required": false,
+      "multiline": true
+    }
+  ]
+}

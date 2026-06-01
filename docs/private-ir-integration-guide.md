@@ -64,9 +64,11 @@ Use the reference files already in this repository:
 - Analyzer examples:
   - `examples/tools/analyzers/line-count-analysis/`
   - `examples/tools/analyzers/deepseek-graph-analysis/`
+  - `examples/tools/analyzers/deepseek-prompt-template-analysis/`
   - `examples/tools/analyzers/codex-one-shot-analysis/`
 
 The DeepSeek example is desensitized. It contains no API key. It reads the key from `DEEPSEEK_API_KEY` or `~/.netron/vscode-preview/secrets/deepseek_api_key`.
+The DeepSeek prompt-template example demonstrates analyzer `description`, two UI prompt inputs, and a real DeepSeek chat-completions call.
 The Codex example calls `codex exec` once with the exported graph text on stdin. It requires a working Codex CLI login on the same machine where the VS Code extension host runs.
 
 ## 2. Register A Provider
@@ -846,10 +848,12 @@ Manifest schema:
   "label": "Graph Edge List",
   "command": "node",
   "args": ["graph-edge-list.js"],
+  "description": "Optional text shown in the UI.",
   "timeoutMs": 30000,
   "env": {
     "OPTIONAL_NAME": "optional value"
-  }
+  },
+  "userInputs": []
 }
 ```
 
@@ -858,9 +862,130 @@ Rules:
 - `id`, `label`, and `command` are required.
 - `args` must be an array of strings.
 - `env` must be an object whose values are strings.
+- `description` is optional. It is shown near the selected analyzer controls.
+- `userInputs` is optional and intended for analyzers. It can contain at most 3 input definitions, meaning the UI will show 最多 3 个 user prompt fields.
 - Duplicate ids are disabled and shown as conflicts.
 - Invalid manifests are shown in the UI as disabled entries with reasons.
 - The registry watches the directories and updates the dropdowns after file changes.
+
+Analyzer user input schema:
+
+```json
+{
+  "id": "my-prompt-analyzer",
+  "label": "My Prompt Analyzer",
+  "description": "Explain what the user should type before running analysis.",
+  "command": "node",
+  "args": ["my-prompt-analyzer.js"],
+  "timeoutMs": 180000,
+  "userInputs": [
+    {
+      "id": "focus",
+      "label": "Focus",
+      "placeholder": "Example: focus on constants, shape propagation, and compare risk.",
+      "description": "Optional extra instruction appended to the analyzer prompt.",
+      "required": false,
+      "multiline": true
+    }
+  ]
+}
+```
+
+When `userInputs` is absent or empty, the analyzer receives the exported text directly on stdin.
+When `userInputs` is present, the analyzer receives this JSON envelope on stdin:
+
+```json
+{
+  "kind": "netron-analyzer-input",
+  "schemaVersion": 1,
+  "exportedText": "...output from selected exporter...",
+  "userInputs": {
+    "focus": "user typed text"
+  }
+}
+```
+
+Node analyzer that supports both old and new stdin:
+
+```js
+#!/usr/bin/env node
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => input += chunk);
+process.stdin.on('end', () => {
+  let exportedText = input;
+  let focus = '';
+  try {
+    const payload = JSON.parse(input);
+    if (payload && payload.kind === 'netron-analyzer-input') {
+      exportedText = payload.exportedText || '';
+      focus = payload.userInputs && payload.userInputs.focus ? payload.userInputs.focus : '';
+    }
+  } catch {
+    // Old analyzer protocol: stdin is plain exported text.
+  }
+  process.stdout.write([
+    'Analysis Result',
+    'Focus: ' + (focus || '(none)'),
+    'Input bytes: ' + Buffer.byteLength(exportedText)
+  ].join('\n'));
+});
+```
+
+Minimal DeepSeek prompt analyzer:
+
+```json
+{
+  "id": "deepseek-prompt-template-analysis",
+  "label": "DeepSeek Prompt Template Analysis",
+  "description": "A minimal DeepSeek analyzer that combines exported graph text with two user prompt fields.",
+  "command": "node",
+  "args": ["deepseek-prompt-template-analysis.js"],
+  "timeoutMs": 180000,
+  "env": {
+    "DEEPSEEK_MODEL": "deepseek-chat",
+    "DEEPSEEK_BASE_URL": "https://api.deepseek.com"
+  },
+  "userInputs": [
+    {
+      "id": "input1",
+      "label": "用户输入",
+      "placeholder": "例如：重点检查 Conv 后处理链路是否存在异常。",
+      "description": "会作为用户分析目标拼接进 prompt。",
+      "required": false,
+      "multiline": true
+    },
+    {
+      "id": "input2",
+      "label": "注意事项",
+      "placeholder": "例如：忽略权重初始化节点，重点关注推理路径。",
+      "description": "会作为额外约束拼接进 prompt。",
+      "required": false,
+      "multiline": true
+    }
+  ]
+}
+```
+
+The script reads the JSON envelope, builds a Chinese graph-analysis prompt, and calls DeepSeek:
+
+```js
+const input = parseInput(await readStdin());
+const prompt = [
+  '你是一个严谨的神经网络图分析专家，擅长阅读模型计算图、识别关键算子链路、分析数据流依赖，并将结构信息转化为可执行的调试和优化建议。',
+  '',
+  '现在我们有如下图结构。',
+  input.graphText.trim(),
+  '',
+  '用户给出如下输入：',
+  input.input1.trim() || '(未提供)',
+  '',
+  '注意事项：',
+  input.input2.trim() || '(未提供)',
+  '',
+  '请结合图结构分析用户输入，并按注意事项完成图分析。'
+].join('\n');
+```
 
 Minimal Node exporter:
 
@@ -940,6 +1065,7 @@ cp -R examples/tools/exporters/crop-json-summary ~/.netron/vscode-preview/export
 cp -R examples/tools/exporters/graph-edge-list ~/.netron/vscode-preview/exporters/
 cp -R examples/tools/analyzers/line-count-analysis ~/.netron/vscode-preview/analyzers/
 cp -R examples/tools/analyzers/deepseek-graph-analysis ~/.netron/vscode-preview/analyzers/
+cp -R examples/tools/analyzers/deepseek-prompt-template-analysis ~/.netron/vscode-preview/analyzers/
 cp -R examples/tools/analyzers/codex-one-shot-analysis ~/.netron/vscode-preview/analyzers/
 ```
 
@@ -1196,6 +1322,7 @@ Use this table before changing code.
 | Copy Export Text disabled | Provider capability or artifact state | Check `capabilities.textExportContext`, confirmed crop, and `buildTextExportContext()` |
 | Exporter fails | User exporter script | Run the exporter manually with saved stdin JSON |
 | Analyzer exits with code 1 | User analyzer script | Run the analyzer manually with the exact exporter stdout |
+| Analyzer text input Backspace does not delete | Webview keyboard event routing | Confirm workbench editable controls stop Backspace propagation before Netron menu shortcuts |
 | Compare cannot bind | Provider `ioSignature` | Print both slots' input/output name, dtype, rank, shape |
 | Compare runs but values are nonsense | Runtime script | Confirm `runCompareArtifact()` returns real numeric values from the intended runtime |
 | Works locally but not Remote SSH | Environment/dependencies | Check the remote server has the same files, venv, secrets, PATH, and library paths |
@@ -1289,6 +1416,8 @@ Constants or weights do not display:
 
 - Tensor value `initializer` is `true` or `false`.
 - It must be an object with `name`, `category`, `type`, `location`, and `preview`.
+- ONNX `Constant` nodes may provide tensors through attributes instead of `graph.initializer`; crop analysis should normalize those outputs as initializers before deciding graph inputs.
+- If a constant tensor becomes a graph input with `unknown` type after crop, debug ONNX constant extraction before debugging runtime inference.
 
 Copy Export Text is unavailable:
 
@@ -1304,6 +1433,13 @@ Analyzer is unavailable:
 - Manifest has invalid JSON.
 - Duplicate analyzer ids exist.
 - Environment variables in manifest are not strings.
+
+Analyzer prompt inputs do not work:
+
+- The analyzer manifest must define `userInputs` as an array with at most 3 items.
+- Each input needs a unique `id`; ids should start with a letter or underscore and contain only letters, numbers, underscores, or hyphens.
+- When `userInputs` is present, the script receives `kind: "netron-analyzer-input"` JSON on stdin, not plain graph text.
+- Required inputs are validated by the extension host before the analyzer process starts.
 
 Codex One-Shot Analysis fails:
 
